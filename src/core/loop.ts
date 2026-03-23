@@ -5,19 +5,33 @@ import type {
 } from "../types.js";
 import { Session } from "./session.js";
 import { AnthropicProvider } from "../providers/anthropic.js";
+import { OpenAICompatProvider } from "../providers/openai-compat.js";
 import { CliToolExecutor } from "../tools/cli.js";
 import { compactSession } from "./compaction.js";
 import { loadSkill, discoverSkills, buildSystemPrompt } from "../skills/loader.js";
 import { FileStore } from "../persistence/file-store.js";
 
+// Provider interface — any object with complete() and summarize()
+export type Provider = AnthropicProvider | OpenAICompatProvider;
+
 export interface LoopContext {
   session: Session;
-  provider: AnthropicProvider;
+  provider: Provider;
   executor: CliToolExecutor;
   config: AgentConfig;
   abortController: AbortController;
   lock: LockHandle;
   store: FileStore;
+}
+
+export function createProvider(config: AgentConfig): Provider {
+  if (config.model.provider === "openai-compat" || config.model.provider === "lmstudio") {
+    return new OpenAICompatProvider(
+      config.model.baseUrl ?? "http://localhost:1234/v1",
+      config.model.apiKey ?? "lm-studio"
+    );
+  }
+  return new AnthropicProvider();
 }
 
 export async function runLoop(ctx: LoopContext): Promise<void> {
@@ -167,7 +181,7 @@ export async function startNewSession(
   }
 
   // Create provider
-  const provider = new AnthropicProvider();
+  const provider = createProvider(config);
 
   // Run the loop
   const abortController = new AbortController();
@@ -225,7 +239,7 @@ export async function resumeSession(
     session.systemPrompt = buildSystemPrompt({ skill });
   }
 
-  const provider = new AnthropicProvider();
+  const provider = createProvider(config);
   const abortController = new AbortController();
 
   try {

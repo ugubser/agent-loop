@@ -110,6 +110,28 @@ tools:
     timeout: 120            # Default tool timeout (seconds)
 ```
 
+### Using a Local LLM (LM Studio, Ollama, etc.)
+
+Any OpenAI-compatible API works. For LM Studio:
+
+```yaml
+# config.lmstudio.yaml
+model:
+  provider: lmstudio
+  model: qwen/qwen3-next-80b
+  maxTokens: 8192
+  baseUrl: http://localhost:1234/v1
+
+session:
+  maxContext: 32000  # Adjust to your model's context window
+```
+
+```bash
+bun run src/cli.ts run research --task "Research topic" --config config.lmstudio.yaml
+```
+
+Supported providers: `anthropic`, `lmstudio`, `openai-compat` (any OpenAI-compatible endpoint).
+
 ## Architecture
 
 ```

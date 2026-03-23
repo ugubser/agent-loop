@@ -1,0 +1,30 @@
+model:
+  provider: lmstudio
+  model: qwen/qwen3-next-80b
+  maxTokens: 8192
+  baseUrl: http://localhost:1234/v1
+
+session:
+  maxContext: 32000       # Local models have smaller context windows
+  checkpointInterval: 5
+  timeout: 21600
+
+skills:
+  dirs:
+    - ./skills
+
+persistence:
+  backend: file
+  dir: ./sessions
+
+tools:
+  cli:
+    allowedCommands:
+      - curl
+      - jq
+      - grep
+      - python3
+      - echo
+      - cat
+      - tee
+    timeout: 120

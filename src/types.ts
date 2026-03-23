@@ -22,9 +22,11 @@ export interface TokenUsage {
 
 export interface AgentConfig {
   model: {
-    provider: string;
+    provider: string; // "anthropic" | "openai-compat" | "lmstudio"
     model: string;
     maxTokens: number;
+    baseUrl?: string; // For openai-compat/lmstudio: e.g., "http://localhost:1234/v1"
+    apiKey?: string; // For openai-compat: API key (defaults to "lm-studio")
   };
   session: {
     maxContext: number;
