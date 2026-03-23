@@ -1,0 +1,29 @@
+model:
+  provider: anthropic
+  model: claude-sonnet-4-6
+  maxTokens: 8192
+
+session:
+  maxContext: 200000
+  checkpointInterval: 5
+  timeout: 21600  # 6 hours
+
+skills:
+  dirs:
+    - ./skills
+
+persistence:
+  backend: file
+  dir: ./sessions
+
+tools:
+  cli:
+    allowedCommands:
+      - curl
+      - jq
+      - grep
+      - python3
+      - echo
+      - cat
+      - tee
+    timeout: 120
