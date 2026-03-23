@@ -89,6 +89,7 @@ export interface CliToolDef {
   command: string;
   args: string[];
   schema: Record<string, { type: string; description?: string }>;
+  stdinParam?: string; // parameter name whose value is piped to stdin
   timeout: number; // seconds
   idempotent: boolean;
 }

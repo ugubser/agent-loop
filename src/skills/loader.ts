@@ -20,6 +20,7 @@ export async function loadSkill(skillPath: string): Promise<SkillDef> {
         command: t.command,
         args: t.args ?? [],
         schema: parseSchema(t.schema ?? {}),
+        stdinParam: t.stdinParam,
         timeout: parseTimeout(t.timeout),
         idempotent: t.idempotent ?? true,
       });

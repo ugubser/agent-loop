@@ -105,6 +105,23 @@ describe("CliToolExecutor", () => {
     expect(result).toContain("ERROR");
   });
 
+  it("pipes stdin when stdinParam is set", async () => {
+    const executor = new CliToolExecutor(["cat"], 120);
+    const tool: CliToolDef = {
+      name: "stdin_test",
+      description: "Cat stdin",
+      command: "cat",
+      args: [],
+      schema: { content: { type: "string" } },
+      stdinParam: "content",
+      timeout: 10,
+      idempotent: true,
+    };
+    executor.register(tool);
+    const result = await executor.execute("stdin_test", { content: "hello from stdin" });
+    expect(result).toBe("hello from stdin");
+  });
+
   it("throws for unknown tool name", async () => {
     const executor = new CliToolExecutor(["echo"], 120);
     await expect(executor.execute("nonexistent", {})).rejects.toThrow(

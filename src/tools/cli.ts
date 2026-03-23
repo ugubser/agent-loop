@@ -87,6 +87,9 @@ export class CliToolExecutor {
     const args = expandTemplates(tool.args, input);
     const timeout = (tool.timeout || this.defaultTimeout) * 1000;
 
+    // Determine if we need to pipe stdin
+    const stdinData = tool.stdinParam ? String(input[tool.stdinParam] ?? "") : null;
+
     return new Promise((resolve, reject) => {
       const child = execFile(
         command,
@@ -105,6 +108,12 @@ export class CliToolExecutor {
           resolve(stdout);
         }
       );
+
+      // Pipe stdin if configured
+      if (stdinData !== null && child.stdin) {
+        child.stdin.write(stdinData);
+        child.stdin.end();
+      }
     });
   }
 }

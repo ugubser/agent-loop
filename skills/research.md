@@ -22,9 +22,11 @@ tools:
     description: Save text content to a file
     command: tee
     args: ["${path}"]
+    stdinParam: content
     schema:
       path: { type: "string", description: "File path to write to" }
-    timeout: 10
+      content: { type: "string", description: "Text content to write" }
+    timeout: 30
     idempotent: false
 ---
 
