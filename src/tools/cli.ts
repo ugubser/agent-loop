@@ -125,7 +125,7 @@ export class CliToolExecutor {
  * 1. Only expand ${paramName} where paramName matches a key in input
  * 2. Unknown ${...} patterns are left literal
  * 3. No environment variable expansion
- * 4. Values are URL-encoded (encodeURIComponent)
+ * 4. Raw substitution (no URL encoding — security comes from execFile, not encoding)
  * 5. Single pass, no recursion
  */
 export function expandTemplates(
@@ -135,8 +135,7 @@ export function expandTemplates(
   return args.map((arg) =>
     arg.replace(/\$\{(\w+)\}/g, (match, key) => {
       if (key in input) {
-        const value = String(input[key]);
-        return encodeURIComponent(value);
+        return String(input[key]);
       }
       return match; // Unknown — leave literal
     })

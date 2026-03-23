@@ -15,12 +15,12 @@ function echoTool(): CliToolDef {
 }
 
 describe("expandTemplates", () => {
-  it("expands known keys with URL encoding", () => {
+  it("expands known keys with raw substitution", () => {
     const result = expandTemplates(
       ["-s", "https://api.com/q=${query}"],
       { query: "hello world" }
     );
-    expect(result).toEqual(["-s", "https://api.com/q=hello%20world"]);
+    expect(result).toEqual(["-s", "https://api.com/q=hello world"]);
   });
 
   it("leaves unknown ${...} patterns literal", () => {
@@ -36,14 +36,14 @@ describe("expandTemplates", () => {
     expect(result).toEqual(["hello-world"]);
   });
 
-  it("URL-encodes special characters", () => {
+  it("preserves special characters (no encoding)", () => {
     const result = expandTemplates(["${q}"], { q: "a&b=c" });
-    expect(result).toEqual(["a%26b%3Dc"]);
+    expect(result).toEqual(["a&b=c"]);
   });
 
   it("does not expand ${...} in values (no recursion)", () => {
     const result = expandTemplates(["${q}"], { q: "${PATH}" });
-    expect(result).toEqual(["%24%7BPATH%7D"]); // URL-encoded, not expanded
+    expect(result).toEqual(["${PATH}"]); // raw value, not expanded further
   });
 
   it("handles empty input", () => {
