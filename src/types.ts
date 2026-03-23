@@ -107,6 +107,12 @@ export interface ToolSchema {
   };
 }
 
+// Skill summary (lightweight, for routing)
+export interface SkillSummary {
+  name: string;
+  description: string;
+}
+
 // Skill definition
 export interface SkillDef {
   name: string;

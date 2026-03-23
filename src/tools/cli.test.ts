@@ -122,6 +122,15 @@ describe("CliToolExecutor", () => {
     expect(result).toBe("hello from stdin");
   });
 
+  it("clearTools removes all registered tools", () => {
+    const executor = new CliToolExecutor(["echo"], 120);
+    executor.register(echoTool());
+    expect(executor.schemas()).toHaveLength(1);
+    executor.clearTools();
+    expect(executor.schemas()).toHaveLength(0);
+    expect(executor.resolve("echo_test")).toBeUndefined();
+  });
+
   it("throws for unknown tool name", async () => {
     const executor = new CliToolExecutor(["echo"], 120);
     await expect(executor.execute("nonexistent", {})).rejects.toThrow(

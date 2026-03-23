@@ -8,8 +8,15 @@ import { AnthropicProvider } from "../providers/anthropic.js";
 import { OpenAICompatProvider } from "../providers/openai-compat.js";
 import { CliToolExecutor } from "../tools/cli.js";
 import { compactSession } from "./compaction.js";
-import { loadSkill, discoverSkills, buildSystemPrompt } from "../skills/loader.js";
+import {
+  loadSkill,
+  discoverSkills,
+  loadSkillSummaries,
+  buildSystemPrompt,
+  buildRouterPrompt,
+} from "../skills/loader.js";
 import { FileStore } from "../persistence/file-store.js";
+import type { ToolSchema, SkillSummary } from "../types.js";
 
 // Provider interface — any object with complete() and summarize()
 export type Provider = AnthropicProvider | OpenAICompatProvider;
@@ -22,7 +29,25 @@ export interface LoopContext {
   abortController: AbortController;
   lock: LockHandle;
   store: FileStore;
+  skillCatalog?: Map<string, string>; // name → path (for use_skill)
+  skillSummaries?: SkillSummary[];     // for system prompt
 }
+
+const USE_SKILL_SCHEMA: ToolSchema = {
+  name: "use_skill",
+  description:
+    "Load a skill to get its specialized tools. Call this to start working with a specific skill, or to switch to a different skill mid-task.",
+  input_schema: {
+    type: "object",
+    properties: {
+      skill_name: {
+        type: "string",
+        description: "Name of the skill to load",
+      },
+    },
+    required: ["skill_name"],
+  },
+};
 
 export function createProvider(config: AgentConfig): Provider {
   if (config.model.provider === "openai-compat" || config.model.provider === "lmstudio") {
@@ -57,15 +82,20 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         );
       }
 
-      // 2. Call the model
+      // 2. Call the model — include use_skill alongside CLI tools when catalog exists
       let response;
       try {
+        const cliSchemas = executor.schemas();
+        const allTools = ctx.skillCatalog
+          ? [USE_SKILL_SCHEMA, ...cliSchemas]
+          : cliSchemas;
+
         response = await provider.complete({
           model: config.model.model,
           maxTokens: config.model.maxTokens,
           system: session.systemPrompt,
           messages: session.messages,
-          tools: executor.schemas().length > 0 ? executor.schemas() : undefined,
+          tools: allTools.length > 0 ? allTools : undefined,
         });
       } catch (err: unknown) {
         // Provider error — pause session
@@ -95,6 +125,52 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
       for (const toolCall of toolUseBlocks) {
         if (abortController.signal.aborted) break;
 
+        // Handle built-in use_skill tool
+        if (toolCall.name === "use_skill" && ctx.skillCatalog) {
+          const skillName = String(toolCall.input.skill_name ?? "");
+          const skillPath = ctx.skillCatalog.get(skillName);
+          if (!skillPath) {
+            const available = Array.from(ctx.skillCatalog.keys()).join(", ");
+            await session.addToolResult(
+              toolCall.id,
+              `ERROR: Skill "${skillName}" not found. Available: ${available}`,
+              true
+            );
+            continue;
+          }
+
+          try {
+            const skill = await loadSkill(skillPath);
+            executor.clearTools();
+            if (skill.tools.length > 0) {
+              executor.registerAll(skill.tools);
+            }
+
+            // Update system prompt with skill instructions + keep skill catalog visible
+            session.systemPrompt = buildSystemPrompt({
+              skill,
+              task: undefined, // task is already in the conversation
+              availableSkills: ctx.skillSummaries,
+            });
+
+            const toolNames = skill.tools.map((t) => t.name).join(", ");
+            await session.addToolResult(
+              toolCall.id,
+              `Loaded skill: ${skillName}. Tools now available: ${toolNames || "none (instructions only)"}`
+            );
+            console.log(`Switched to skill: ${skillName}`);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            await session.addToolResult(
+              toolCall.id,
+              `ERROR loading skill: ${message}`,
+              true
+            );
+          }
+          continue;
+        }
+
+        // Handle CLI tools
         const tool = executor.resolve(toolCall.name);
         if (!tool) {
           await session.addToolResult(
@@ -137,37 +213,55 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
 }
 
 export async function startNewSession(
-  skillName: string,
+  skillName: string | undefined,
   config: AgentConfig,
   store: FileStore,
   task?: string
 ): Promise<string> {
-  // Discover and load skill
-  const skills = await discoverSkills(config.skills.dirs);
-  const skillPath = skills.get(skillName);
-  if (!skillPath) {
-    const available = Array.from(skills.keys()).join(", ");
-    throw new Error(
-      `Skill "${skillName}" not found. Available: ${available || "none"}`
-    );
-  }
-  const skill = await loadSkill(skillPath);
-
-  // Create session
-  const session = await Session.create(skillName, config, store);
-  const lock = await store.acquireLock(session.id);
-
-  // Set up tools
+  const skillCatalog = await discoverSkills(config.skills.dirs);
   const executor = new CliToolExecutor(
     config.tools.cli.allowedCommands,
     config.tools.cli.timeout
   );
-  if (skill.tools.length > 0) {
-    executor.registerAll(skill.tools);
+
+  let sessionSkillName: string;
+  let skillSummaries: SkillSummary[] | undefined;
+
+  if (skillName && skillName !== "auto") {
+    // Direct skill mode — load a specific skill
+    const skillPath = skillCatalog.get(skillName);
+    if (!skillPath) {
+      const available = Array.from(skillCatalog.keys()).join(", ");
+      throw new Error(
+        `Skill "${skillName}" not found. Available: ${available || "none"}`
+      );
+    }
+    const skill = await loadSkill(skillPath);
+    if (skill.tools.length > 0) {
+      executor.registerAll(skill.tools);
+    }
+    sessionSkillName = skillName;
+  } else {
+    // Router mode — agent picks the skill dynamically
+    sessionSkillName = "auto";
   }
 
+  // Create session
+  const session = await Session.create(sessionSkillName, config, store);
+  const lock = await store.acquireLock(session.id);
+
   // Build system prompt
-  session.systemPrompt = buildSystemPrompt({ skill, task });
+  if (sessionSkillName === "auto") {
+    skillSummaries = await loadSkillSummaries(config.skills.dirs);
+    session.systemPrompt = buildRouterPrompt({ skills: skillSummaries, task });
+    console.log(
+      `Router mode — available skills: ${skillSummaries.map((s) => s.name).join(", ")}`
+    );
+  } else {
+    const skillPath = skillCatalog.get(sessionSkillName)!;
+    const skill = await loadSkill(skillPath);
+    session.systemPrompt = buildSystemPrompt({ skill, task });
+  }
 
   // Add initial user message with the task
   if (task) {
@@ -194,6 +288,8 @@ export async function startNewSession(
       abortController,
       lock,
       store,
+      skillCatalog: sessionSkillName === "auto" ? skillCatalog : undefined,
+      skillSummaries,
     });
   } finally {
     await store.releaseLock(lock);
@@ -216,27 +312,35 @@ export async function resumeSession(
     );
   }
 
-  // Re-load skill
-  const skills = await discoverSkills(config.skills.dirs);
-  const skillPath = skills.get(session.skillName);
-  if (!skillPath) {
-    await store.releaseLock(lock);
-    throw new Error(`Skill "${session.skillName}" not found for resume`);
-  }
-  const skill = await loadSkill(skillPath);
-
-  // Re-build executor
+  const skillCatalog = await discoverSkills(config.skills.dirs);
   const executor = new CliToolExecutor(
     config.tools.cli.allowedCommands,
     config.tools.cli.timeout
   );
-  if (skill.tools.length > 0) {
-    executor.registerAll(skill.tools);
-  }
 
-  // Re-build system prompt if not restored from checkpoint
-  if (!session.systemPrompt) {
-    session.systemPrompt = buildSystemPrompt({ skill });
+  let skillSummaries: SkillSummary[] | undefined;
+  const isRouterMode = session.skillName === "auto";
+
+  if (!isRouterMode) {
+    // Direct skill mode — re-load the specific skill
+    const skillPath = skillCatalog.get(session.skillName);
+    if (!skillPath) {
+      await store.releaseLock(lock);
+      throw new Error(`Skill "${session.skillName}" not found for resume`);
+    }
+    const skill = await loadSkill(skillPath);
+    if (skill.tools.length > 0) {
+      executor.registerAll(skill.tools);
+    }
+    if (!session.systemPrompt) {
+      session.systemPrompt = buildSystemPrompt({ skill });
+    }
+  } else {
+    // Router mode — restore with skill catalog
+    skillSummaries = await loadSkillSummaries(config.skills.dirs);
+    if (!session.systemPrompt) {
+      session.systemPrompt = buildRouterPrompt({ skills: skillSummaries });
+    }
   }
 
   const provider = createProvider(config);
@@ -251,6 +355,8 @@ export async function resumeSession(
       abortController,
       lock,
       store,
+      skillCatalog: isRouterMode ? skillCatalog : undefined,
+      skillSummaries,
     });
   } finally {
     await store.releaseLock(lock);

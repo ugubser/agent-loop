@@ -72,16 +72,20 @@ program
   .version("0.1.0");
 
 program
-  .command("run <skill>")
-  .description("Start a new agent session with the given skill")
+  .command("run [skill]")
+  .description("Start a new agent session. Omit skill for auto-routing mode.")
   .option("-c, --config <path>", "Config file path", "config.yaml")
   .option("-t, --task <text>", "Task description for the session")
-  .action(async (skill: string, opts: { config: string; task?: string }) => {
+  .action(async (skill: string | undefined, opts: { config: string; task?: string }) => {
     const config = loadConfig(opts.config);
     const store = new FileStore(config.persistence.dir);
     fs.mkdirSync(config.persistence.dir, { recursive: true });
 
-    console.log(`Starting session with skill: ${skill}`);
+    if (skill) {
+      console.log(`Starting session with skill: ${skill}`);
+    } else {
+      console.log("Starting session in auto-routing mode");
+    }
     if (opts.task) console.log(`Task: ${opts.task}`);
 
     try {

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import matter from "gray-matter";
-import type { SkillDef, CliToolDef } from "../types.js";
+import type { SkillDef, SkillSummary, CliToolDef } from "../types.js";
 
 export async function loadSkill(skillPath: string): Promise<SkillDef> {
   const raw = fs.readFileSync(skillPath, "utf-8");
@@ -74,13 +74,73 @@ Rules:
 - Summarize your progress periodically
 - When the task is complete, provide a final summary`;
 
+const ROUTER_IDENTITY = `You are an autonomous agent with access to multiple skills. Each skill provides a set of tools for a specific domain.
+
+To start working, call the use_skill tool with the skill that best matches the task. You can switch skills at any time by calling use_skill again.
+
+Rules:
+- Pick the most appropriate skill for the task
+- If the task spans multiple domains, start with the primary skill and switch as needed
+- Be systematic and thorough
+- After each action, reflect on what you learned
+- If a tool fails, try a different approach
+- When the task is complete, provide a final summary`;
+
+export async function loadSkillSummaries(
+  dirs: string[]
+): Promise<SkillSummary[]> {
+  const skillMap = await discoverSkills(dirs);
+  const summaries: SkillSummary[] = [];
+
+  for (const [name, filePath] of skillMap) {
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const { data } = matter(raw);
+      summaries.push({
+        name,
+        description: (data.description as string) ?? "",
+      });
+    } catch {
+      summaries.push({ name, description: "" });
+    }
+  }
+
+  return summaries;
+}
+
+export function buildRouterPrompt(parts: {
+  skills: SkillSummary[];
+  task?: string;
+}): string {
+  const sections = [ROUTER_IDENTITY];
+
+  sections.push("\n## Available Skills\n");
+  for (const skill of parts.skills) {
+    sections.push(`- **${skill.name}**: ${skill.description}`);
+  }
+
+  if (parts.task) {
+    sections.push(`\n## Task\n\n${parts.task}`);
+  }
+
+  return sections.join("\n");
+}
+
 export function buildSystemPrompt(parts: {
   skill: SkillDef;
   task?: string;
+  availableSkills?: SkillSummary[];
 }): string {
   const sections = [BASE_IDENTITY];
 
-  sections.push(`\n## Skill: ${parts.skill.name}\n\n${parts.skill.instructions}`);
+  if (parts.availableSkills?.length) {
+    sections.push("\n## Available Skills (use use_skill to switch)\n");
+    for (const s of parts.availableSkills) {
+      sections.push(`- **${s.name}**: ${s.description}`);
+    }
+  }
+
+  sections.push(`\n## Active Skill: ${parts.skill.name}\n\n${parts.skill.instructions}`);
 
   if (parts.task) {
     sections.push(`\n## Task\n\n${parts.task}`);

@@ -197,4 +197,87 @@ describe("runLoop", () => {
     expect(toolResults).toHaveLength(2);
     await store.releaseLock(ctx.lock);
   });
+
+  it("handles use_skill built-in tool", async () => {
+    // Create a skill file for the test
+    const skillDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "test-skill.md"),
+      `---
+name: test-skill
+description: A test skill
+tools:
+  - name: echo_test
+    description: Echo
+    command: echo
+    args: ["\${message}"]
+    schema:
+      message: { type: "string" }
+    timeout: 10
+    idempotent: true
+---
+
+## Instructions
+You are a test agent.
+`
+    );
+
+    const skillCatalog = new Map([["test-skill", path.join(skillDir, "test-skill.md")]]);
+
+    const provider = new MockProvider([
+      // First call: model picks a skill
+      { toolCalls: [{ id: "s1", name: "use_skill", input: { skill_name: "test-skill" } }] },
+      // Second call: model uses the skill's tool
+      { toolCalls: [{ id: "t1", name: "echo_test", input: { message: "hello" } }] },
+      // Third call: done
+      { text: "All done." },
+    ]);
+
+    const ctx = await makeContext(store, provider);
+    ctx.skillCatalog = skillCatalog;
+    ctx.skillSummaries = [{ name: "test-skill", description: "A test skill" }];
+
+    await runLoop(ctx);
+
+    expect(ctx.session.status).toBe("completed");
+    // Should have: user msg, assistant(use_skill), user(result), assistant(echo), user(result), assistant(done)
+    expect(ctx.session.messages.length).toBeGreaterThanOrEqual(6);
+    // Verify use_skill result is in the messages
+    const useSkillResult = ctx.session.messages.find(
+      (m) =>
+        Array.isArray(m.content) &&
+        m.content.some(
+          (b: { type: string; content?: string }) =>
+            b.type === "tool_result" && b.content?.includes("Loaded skill")
+        )
+    );
+    expect(useSkillResult).toBeTruthy();
+    await store.releaseLock(ctx.lock);
+  });
+
+  it("returns error for unknown skill in use_skill", async () => {
+    const provider = new MockProvider([
+      { toolCalls: [{ id: "s1", name: "use_skill", input: { skill_name: "nonexistent" } }] },
+      { text: "OK." },
+    ]);
+
+    const ctx = await makeContext(store, provider);
+    ctx.skillCatalog = new Map();
+    ctx.skillSummaries = [];
+
+    await runLoop(ctx);
+
+    expect(ctx.session.status).toBe("completed");
+    const errorResult = ctx.session.messages.find(
+      (m) =>
+        Array.isArray(m.content) &&
+        m.content.some(
+          (b: { type: string; content?: string }) =>
+            b.type === "tool_result" && b.content?.includes("not found")
+        )
+    );
+    expect(errorResult).toBeTruthy();
+    await store.releaseLock(ctx.lock);
+  });
 });

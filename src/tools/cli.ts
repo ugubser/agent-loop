@@ -35,6 +35,10 @@ export class CliToolExecutor {
     this.tools.set(tool.name, tool);
   }
 
+  clearTools(): void {
+    this.tools.clear();
+  }
+
   registerAll(tools: CliToolDef[]): void {
     for (const tool of tools) {
       this.register(tool);

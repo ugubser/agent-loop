@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { loadSkill, discoverSkills, buildSystemPrompt } from "./loader.js";
+import {
+  loadSkill,
+  discoverSkills,
+  loadSkillSummaries,
+  buildSystemPrompt,
+  buildRouterPrompt,
+} from "./loader.js";
 
 const VALID_SKILL = `---
 name: test-search
@@ -121,8 +127,57 @@ describe("discoverSkills", () => {
   });
 });
 
+describe("loadSkillSummaries", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-loop-summaries-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("loads name and description from skill files", async () => {
+    fs.writeFileSync(path.join(tmpDir, "a.md"), VALID_SKILL);
+    fs.writeFileSync(path.join(tmpDir, "b.md"), MINIMAL_SKILL);
+
+    const summaries = await loadSkillSummaries([tmpDir]);
+    expect(summaries).toHaveLength(2);
+    const research = summaries.find((s) => s.name === "test-search");
+    expect(research?.description).toBe("Search the web");
+  });
+});
+
+describe("buildRouterPrompt", () => {
+  it("lists all skills and includes task", () => {
+    const prompt = buildRouterPrompt({
+      skills: [
+        { name: "research", description: "Web research" },
+        { name: "coding", description: "Write code" },
+      ],
+      task: "Find AI news",
+    });
+
+    expect(prompt).toContain("multiple skills");
+    expect(prompt).toContain("use_skill");
+    expect(prompt).toContain("**research**: Web research");
+    expect(prompt).toContain("**coding**: Write code");
+    expect(prompt).toContain("Find AI news");
+  });
+
+  it("works without task", () => {
+    const prompt = buildRouterPrompt({
+      skills: [{ name: "research", description: "Web research" }],
+    });
+
+    expect(prompt).toContain("**research**");
+    expect(prompt).not.toContain("## Task");
+  });
+});
+
 describe("buildSystemPrompt", () => {
-  it("builds 3-part prompt", () => {
+  it("builds prompt with active skill", () => {
     const prompt = buildSystemPrompt({
       skill: {
         name: "research",
@@ -134,10 +189,23 @@ describe("buildSystemPrompt", () => {
     });
 
     expect(prompt).toContain("autonomous agent");
-    expect(prompt).toContain("## Skill: research");
+    expect(prompt).toContain("Active Skill: research");
     expect(prompt).toContain("Search the web and synthesize.");
     expect(prompt).toContain("## Task");
     expect(prompt).toContain("Research TypeScript history");
+  });
+
+  it("includes available skills when provided", () => {
+    const prompt = buildSystemPrompt({
+      skill: { name: "research", description: "", instructions: "Do research.", tools: [] },
+      availableSkills: [
+        { name: "research", description: "Web research" },
+        { name: "coding", description: "Write code" },
+      ],
+    });
+
+    expect(prompt).toContain("use_skill to switch");
+    expect(prompt).toContain("**coding**: Write code");
   });
 
   it("works without task", () => {
@@ -150,7 +218,7 @@ describe("buildSystemPrompt", () => {
       },
     });
 
-    expect(prompt).toContain("## Skill: test");
+    expect(prompt).toContain("Active Skill: test");
     expect(prompt).not.toContain("## Task");
   });
 });
