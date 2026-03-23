@@ -20,6 +20,7 @@ persistence:
 tools:
   cli:
     allowedCommands:
+      - agent-browser
       - curl
       - jq
       - grep
