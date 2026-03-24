@@ -110,10 +110,30 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         return;
       }
 
-      // 3. Check if text only (no tool calls)
+      // 3. Check for truncated output (max_tokens hit)
       const toolUseBlocks = response.content.filter(
         (b): b is ToolUseBlock => b.type === "tool_use"
       );
+
+      if (response.stopReason === "max_tokens") {
+        console.error(`\nWarning: model output was truncated (max_tokens). Increase maxTokens in config.`);
+        if (toolUseBlocks.length > 0) {
+          // Tool calls were truncated — don't execute them, tell the model
+          await session.addAssistantMessage(response);
+          for (const toolCall of toolUseBlocks) {
+            await session.addToolResult(
+              toolCall.id,
+              "ERROR: Your output was truncated (max_tokens reached). The tool call arguments are incomplete. " +
+              "Reduce the size of your tool call or split it into multiple smaller calls.",
+              true
+            );
+          }
+          session.iteration++;
+          await store.writeState(session.id, session.state);
+          await session.checkpoint();
+          continue;
+        }
+      }
 
       if (toolUseBlocks.length === 0) {
         // Normal completion — model returned text with no tool calls

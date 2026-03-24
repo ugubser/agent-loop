@@ -114,7 +114,10 @@ export class OpenAICompatProvider {
         output: data.usage?.completion_tokens ?? 0,
         total: data.usage?.total_tokens ?? 0,
       },
-      stopReason: choice.finish_reason === "tool_calls" ? "tool_use" : "end_turn",
+      stopReason:
+        choice.finish_reason === "tool_calls" ? "tool_use"
+        : choice.finish_reason === "length" ? "max_tokens"
+        : "end_turn",
     };
   }
 
