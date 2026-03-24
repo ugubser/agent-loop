@@ -5,8 +5,10 @@ import * as path from "node:path";
 import yaml from "js-yaml";
 import "dotenv/config";
 import type { AgentConfig } from "./types.js";
+import { execFileSync } from "node:child_process";
 import { FileStore } from "./persistence/file-store.js";
 import { startNewSession, resumeSession } from "./core/loop.js";
+import { discoverSkills } from "./skills/loader.js";
 
 const DEFAULT_CONFIG: AgentConfig = {
   model: {
@@ -118,6 +120,69 @@ program
       console.error(`Error: ${msg}`);
       process.exit(1);
     }
+  });
+
+program
+  .command("auth [skill] [url]")
+  .description("Open a headed browser to warm up a session (accept cookies, solve CAPTCHAs, log in)")
+  .option("-c, --config <path>", "Config file path", "config.yaml")
+  .action(async (skill: string | undefined, url: string | undefined, opts: { config: string }) => {
+    const config = loadConfig(opts.config);
+
+    // Determine session name — use skill name, or "default"
+    let sessionName = skill ?? "default";
+
+    // If a skill name was given, verify it exists
+    if (skill) {
+      const skills = await discoverSkills(config.skills.dirs);
+      if (!skills.has(skill)) {
+        const available = Array.from(skills.keys()).join(", ");
+        console.error(`Skill "${skill}" not found. Available: ${available || "none"}`);
+        process.exit(1);
+      }
+    }
+
+    const target = url ?? "https://www.google.com";
+
+    // Close any running headless daemon first
+    try {
+      execFileSync("agent-browser", ["close"], { stdio: "pipe" });
+    } catch {
+      // No daemon running — fine
+    }
+
+    console.log(`Opening headed browser for session "${sessionName}"...`);
+    console.log(`Navigate, accept cookies, solve CAPTCHAs — the session is saved automatically.`);
+    console.log(`\nPress Enter here when you're done.\n`);
+
+    // Open headed browser with the session name
+    try {
+      execFileSync("agent-browser", [
+        "--headed",
+        "--session-name", sessionName,
+        "open", target,
+      ], { stdio: "pipe" });
+    } catch {
+      // Ignore errors from open
+    }
+
+    // Wait for user to press Enter
+    await new Promise<void>((resolve) => {
+      process.stdin.resume();
+      process.stdin.once("data", () => {
+        process.stdin.pause();
+        resolve();
+      });
+    });
+
+    // Close the headed browser so next agent run starts headless
+    try {
+      execFileSync("agent-browser", ["close"], { stdio: "pipe" });
+    } catch {
+      // Already closed
+    }
+
+    console.log(`Session "${sessionName}" saved. The agent will reuse these cookies.`);
   });
 
 program
