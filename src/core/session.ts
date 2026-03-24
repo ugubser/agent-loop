@@ -125,6 +125,10 @@ export class Session {
     return this._state.tokenUsage;
   }
 
+  get state(): SessionState {
+    return this._state;
+  }
+
   get messages(): Message[] {
     return this._messages;
   }

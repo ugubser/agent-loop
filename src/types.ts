@@ -27,6 +27,7 @@ export interface AgentConfig {
     maxTokens: number;
     baseUrl?: string; // For openai-compat/lmstudio: e.g., "http://localhost:1234/v1"
     apiKey?: string; // For openai-compat: API key (defaults to "lm-studio")
+    requestTimeout?: number; // Milliseconds before aborting an LLM request (default: 300000)
   };
   session: {
     maxContext: number;

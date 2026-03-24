@@ -53,7 +53,8 @@ export function createProvider(config: AgentConfig): Provider {
   if (config.model.provider === "openai-compat" || config.model.provider === "lmstudio") {
     return new OpenAICompatProvider(
       config.model.baseUrl ?? "http://localhost:1234/v1",
-      config.model.apiKey ?? "lm-studio"
+      config.model.apiKey ?? "lm-studio",
+      config.model.requestTimeout ?? 300_000
     );
   }
   return new AnthropicProvider();
@@ -100,7 +101,10 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
       } catch (err: unknown) {
         // Provider error — pause session
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`Provider error: ${message}`);
+        console.error(`\nProvider error: ${message}`);
+        if (err instanceof Error && err.name === "TimeoutError") {
+          console.error("Hint: The LLM request timed out. The model may be too slow or the server unresponsive.");
+        }
         await session.setPaused("provider_error");
         await session.forceCheckpoint();
         return;
@@ -193,8 +197,9 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         }
       }
 
-      // 5. Increment iteration and checkpoint
+      // 5. Increment iteration, persist state, and checkpoint
       session.iteration++;
+      await store.writeState(session.id, session.state);
       await session.checkpoint();
     }
 

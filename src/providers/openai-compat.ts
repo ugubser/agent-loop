@@ -14,10 +14,12 @@ import type {
 export class OpenAICompatProvider {
   private baseUrl: string;
   private apiKey: string;
+  private requestTimeout: number;
 
-  constructor(baseUrl = "http://localhost:1234/v1", apiKey = "lm-studio") {
+  constructor(baseUrl = "http://localhost:1234/v1", apiKey = "lm-studio", requestTimeout = 300_000) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.apiKey = apiKey;
+    this.requestTimeout = requestTimeout;
   }
 
   async complete(params: {
@@ -59,6 +61,7 @@ export class OpenAICompatProvider {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(this.requestTimeout),
     });
 
     if (!response.ok) {
