@@ -57,7 +57,7 @@ export function createProvider(config: AgentConfig): Provider {
       config.model.requestTimeout ?? 300_000
     );
   }
-  return new AnthropicProvider();
+  return new AnthropicProvider(config.model.apiKey, config.model.authToken);
 }
 
 export async function runLoop(ctx: LoopContext): Promise<void> {

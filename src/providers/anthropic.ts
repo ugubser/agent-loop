@@ -11,8 +11,11 @@ import type {
 export class AnthropicProvider {
   private client: Anthropic;
 
-  constructor(apiKey?: string) {
-    this.client = new Anthropic({ apiKey }); // Falls back to ANTHROPIC_API_KEY env
+  constructor(apiKey?: string, authToken?: string) {
+    this.client = new Anthropic({
+      apiKey: authToken ? null : apiKey,  // Falls back to ANTHROPIC_API_KEY env
+      authToken,                          // Falls back to ANTHROPIC_AUTH_TOKEN env
+    });
   }
 
   async complete(params: {
