@@ -26,6 +26,7 @@ tools:
       - jq
       - grep
       - python3
+      - /home/ugubser/Github/Arcos-Issuance-LibreChat-PoC/ecofin-mcp/venv/bin/python
       - echo
       - cat
       - tee

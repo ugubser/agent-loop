@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { execFileSync } from "node:child_process";
+import * as path from "node:path";
 import type { CliToolDef, ToolSchema } from "../types.js";
 
 export class CliToolExecutor {
@@ -12,11 +13,16 @@ export class CliToolExecutor {
   ) {
     // Resolve each allowed command to absolute path at startup
     for (const cmd of allowedCommands) {
-      try {
-        const resolved = execFileSync("which", [cmd], { encoding: "utf-8" }).trim();
-        this.resolvedCommands.set(cmd, resolved);
-      } catch {
-        // Command not found on PATH — will error at registration time
+      if (path.isAbsolute(cmd)) {
+        // Absolute paths are used as-is (e.g. venv python interpreters)
+        this.resolvedCommands.set(cmd, cmd);
+      } else {
+        try {
+          const resolved = execFileSync("which", [cmd], { encoding: "utf-8" }).trim();
+          this.resolvedCommands.set(cmd, resolved);
+        } catch {
+          // Command not found on PATH — will error at registration time
+        }
       }
     }
   }
@@ -94,11 +100,16 @@ export class CliToolExecutor {
     // Determine if we need to pipe stdin
     const stdinData = tool.stdinParam ? String(input[tool.stdinParam] ?? "") : null;
 
+    // Merge tool-specific env vars with process env
+    const env = tool.env
+      ? { ...process.env, ...tool.env }
+      : undefined;
+
     return new Promise((resolve, reject) => {
       const child = execFile(
         command,
         args,
-        { timeout, maxBuffer: 1024 * 1024 },
+        { timeout, maxBuffer: 1024 * 1024, env },
         (error, stdout, stderr) => {
           if (error) {
             if (error.killed) {

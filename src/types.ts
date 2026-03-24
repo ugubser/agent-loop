@@ -93,6 +93,7 @@ export interface CliToolDef {
   args: string[];
   schema: Record<string, { type: string; description?: string }>;
   stdinParam?: string; // parameter name whose value is piped to stdin
+  env?: Record<string, string>; // extra environment variables for this tool
   timeout: number; // seconds
   idempotent: boolean;
 }

@@ -11,9 +11,13 @@ export async function loadSkill(skillPath: string): Promise<SkillDef> {
     throw new Error(`Skill at ${skillPath} is missing required 'name' field`);
   }
 
+  // Skill-level env vars are inherited by all tools
+  const skillEnv = (data.env as Record<string, string>) ?? {};
+
   const tools: CliToolDef[] = [];
   if (Array.isArray(data.tools)) {
     for (const t of data.tools) {
+      const toolEnv = { ...skillEnv, ...(t.env ?? {}) };
       tools.push({
         name: t.name,
         description: t.description ?? `Tool: ${t.name}`,
@@ -21,6 +25,7 @@ export async function loadSkill(skillPath: string): Promise<SkillDef> {
         args: t.args ?? [],
         schema: parseSchema(t.schema ?? {}),
         stdinParam: t.stdinParam,
+        env: Object.keys(toolEnv).length > 0 ? toolEnv : undefined,
         timeout: parseTimeout(t.timeout),
         idempotent: t.idempotent ?? true,
       });
