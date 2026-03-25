@@ -97,6 +97,20 @@ export class CliToolExecutor {
     const args = expandTemplates(tool.args, input);
     const timeout = (tool.timeout || this.defaultTimeout) * 1000;
 
+    // Validate: if any expanded arg looks like JSON but doesn't parse, reject early
+    for (const arg of args) {
+      const trimmed = arg.trim();
+      if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length > 2) {
+        try {
+          JSON.parse(trimmed);
+        } catch {
+          return `ERROR: Malformed JSON in tool argument. The JSON is incomplete or invalid. ` +
+            `This usually means your output was too long. Try splitting into smaller calls. ` +
+            `Fragment: ${trimmed.slice(0, 200)}...`;
+        }
+      }
+    }
+
     // Determine if we need to pipe stdin
     const stdinData = tool.stdinParam ? String(input[tool.stdinParam] ?? "") : null;
 
