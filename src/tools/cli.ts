@@ -103,10 +103,10 @@ export class CliToolExecutor {
       if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length > 2) {
         try {
           JSON.parse(trimmed);
-        } catch {
-          return `ERROR: Malformed JSON in tool argument. The JSON is incomplete or invalid. ` +
-            `This usually means your output was too long. Try splitting into smaller calls. ` +
-            `Fragment: ${trimmed.slice(0, 200)}...`;
+        } catch (parseErr) {
+          return `ERROR: Malformed JSON in tool argument. ${diagnoseJson(trimmed)} ` +
+            `Parser: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. ` +
+            `Try splitting into smaller calls.`;
         }
       }
     }
@@ -157,6 +157,42 @@ export class CliToolExecutor {
  * 4. Raw substitution (no URL encoding — security comes from execFile, not encoding)
  * 5. Single pass, no recursion
  */
+/**
+ * Diagnose common JSON issues and return a human-readable hint.
+ */
+function diagnoseJson(s: string): string {
+  let openBraces = 0, closeBraces = 0;
+  let openBrackets = 0, closeBrackets = 0;
+  let inString = false;
+  let escape = false;
+
+  for (const c of s) {
+    if (escape) { escape = false; continue; }
+    if (c === "\\") { escape = true; continue; }
+    if (c === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === "{") openBraces++;
+    if (c === "}") closeBraces++;
+    if (c === "[") openBrackets++;
+    if (c === "]") closeBrackets++;
+  }
+
+  const hints: string[] = [];
+  const missingBraces = openBraces - closeBraces;
+  const missingBrackets = openBrackets - closeBrackets;
+
+  if (missingBraces > 0) hints.push(`Missing ${missingBraces} closing "}" brace(s).`);
+  if (missingBraces < 0) hints.push(`Extra ${-missingBraces} closing "}" brace(s).`);
+  if (missingBrackets > 0) hints.push(`Missing ${missingBrackets} closing "]" bracket(s).`);
+  if (missingBrackets < 0) hints.push(`Extra ${-missingBrackets} closing "]" bracket(s).`);
+
+  if (s.endsWith(",")) hints.push(`Trailing comma at end.`);
+
+  if (hints.length === 0) hints.push("JSON structure issue.");
+
+  return hints.join(" ");
+}
+
 export function expandTemplates(
   args: string[],
   input: Record<string, unknown>
