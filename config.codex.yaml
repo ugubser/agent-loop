@@ -1,7 +1,7 @@
 model:
   provider: openai-compat
-  model: gpt-5.1-codex-mini
-  maxTokens: 16384
+  model: gpt-5.3-codex
+  maxTokens: 200000
   baseUrl: http://127.0.0.1:10531/v1
   apiKey: unused
 
@@ -23,6 +23,7 @@ tools:
     allowedCommands:
       - agent-browser
       - bash
+      - bun
       - curl
       - jq
       - grep
