@@ -71,6 +71,7 @@ describe("Integration: Full Session Lifecycle", () => {
       { toolCalls: [{ id: "t2", name: "echo_test", input: { message: "step 2" } }] },
       { toolCalls: [{ id: "t3", name: "echo_test", input: { message: "step 3" } }] },
       { text: "All steps complete. Here is my report." },
+      { text: "Yes, confirmed done." },  // Response to completion nudge
     ]);
 
     const ctx = await setupContext(store, provider, config);
@@ -78,7 +79,7 @@ describe("Integration: Full Session Lifecycle", () => {
 
     // Verify final state
     expect(ctx.session.status).toBe("completed");
-    expect(ctx.session.iteration).toBe(3);
+    expect(ctx.session.iteration).toBe(4); // 3 tool iterations + 1 nudge
 
     // Verify transcript has entries
     const transcript = await store.readTranscript(ctx.session.id);
@@ -87,7 +88,7 @@ describe("Integration: Full Session Lifecycle", () => {
     // Verify state.json on disk
     const state = await store.readState(ctx.session.id);
     expect(state.status).toBe("completed");
-    expect(state.iteration).toBe(3);
+    expect(state.iteration).toBe(4); // 3 tool iterations + 1 nudge
 
     // Verify checkpoint was written (interval=2, so at iteration 2)
     const checkpoints = await store.listCheckpoints(ctx.session.id);

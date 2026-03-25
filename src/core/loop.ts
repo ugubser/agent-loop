@@ -1,6 +1,7 @@
 import type {
   AgentConfig,
   LockHandle,
+  Message,
   ToolUseBlock,
 } from "../types.js";
 import { Session } from "./session.js";
@@ -67,6 +68,9 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
 
   // Register signal handlers
   const cleanup = setupSignalHandlers(abortController, session, lock, store);
+
+  // Track whether we've already nudged the model to confirm completion
+  let completionConfirmed = false;
 
   try {
     while (!session.isTimedOut() && !session.isMaxSteps() && !abortController.signal.aborted) {
@@ -136,12 +140,37 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
       }
 
       if (toolUseBlocks.length === 0) {
-        // Normal completion — model returned text with no tool calls
         await session.addAssistantMessage(response);
+
+        // If this is the first time the model stopped without tool calls,
+        // nudge it to confirm it's really done before completing.
+        if (!completionConfirmed) {
+          completionConfirmed = true;
+          const nudge: Message = {
+            role: "user",
+            content: "Are you done? If there are remaining steps, unanswered questions, or warnings to fix, continue by calling the appropriate tool. If the task is truly complete with no issues, respond with your final summary.",
+          };
+          session.messages.push(nudge);
+          await store.appendTranscript(session.id, {
+            type: "message",
+            timestamp: new Date().toISOString(),
+            iteration: session.iteration,
+            data: nudge,
+          });
+          session.iteration++;
+          await store.writeState(session.id, session.state);
+          await session.checkpoint();
+          continue;
+        }
+
+        // Second time without tool calls — genuinely done
         await session.setCompleted();
         await session.forceCheckpoint();
         return;
       }
+
+      // Reset confirmation flag when model uses tools
+      completionConfirmed = false;
 
       // 4. Execute tool calls
       await session.addAssistantMessage(response);

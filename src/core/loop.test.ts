@@ -64,16 +64,17 @@ describe("runLoop", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("completes in 1 iteration when model returns text only", async () => {
+  it("completes after nudge when model returns text only", async () => {
     const provider = new MockProvider([
       { text: "Task complete. Here are the results." },
+      { text: "Yes, I am done." },  // Response to completion nudge
     ]);
     const ctx = await makeContext(store, provider);
     await runLoop(ctx);
 
     expect(ctx.session.status).toBe("completed");
-    expect(ctx.session.iteration).toBe(0);
-    expect(provider.calls).toHaveLength(1);
+    expect(ctx.session.iteration).toBe(1); // nudge adds an iteration
+    expect(provider.calls).toHaveLength(2);
     await store.releaseLock(ctx.lock);
   });
 
@@ -81,15 +82,16 @@ describe("runLoop", () => {
     const provider = new MockProvider([
       { toolCalls: [{ id: "t1", name: "echo_test", input: { message: "hello" } }] },
       { text: "Done after using echo." },
+      { text: "Yes, confirmed done." },  // Response to completion nudge
     ]);
     const ctx = await makeContext(store, provider);
     await runLoop(ctx);
 
     expect(ctx.session.status).toBe("completed");
-    expect(ctx.session.iteration).toBe(1);
-    expect(provider.calls).toHaveLength(2);
-    // Session should have: user msg, assistant (tool call), user (tool result), assistant (done)
-    expect(ctx.session.messages.length).toBeGreaterThanOrEqual(4);
+    expect(ctx.session.iteration).toBe(2); // tool iteration + nudge iteration
+    expect(provider.calls).toHaveLength(3);
+    // Session should have: user msg, assistant (tool call), user (tool result), assistant (done), user (nudge), assistant (confirm)
+    expect(ctx.session.messages.length).toBeGreaterThanOrEqual(6);
     await store.releaseLock(ctx.lock);
   });
 
