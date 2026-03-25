@@ -1,0 +1,34 @@
+model:
+  provider: openai-compat
+  model: gpt-5.1-codex-mini
+  maxTokens: 16384
+  baseUrl: http://127.0.0.1:10531/v1
+  apiKey: unused
+
+session:
+  maxContext: 1000000     # Codex supports 1M context
+  checkpointInterval: 5
+  timeout: 21600
+
+skills:
+  dirs:
+    - ./skills
+
+persistence:
+  backend: file
+  dir: ./sessions
+
+tools:
+  cli:
+    allowedCommands:
+      - agent-browser
+      - bash
+      - curl
+      - jq
+      - grep
+      - python3
+      - /home/ugubser/Github/Arcos-Issuance-LibreChat-PoC/ecofin-mcp/venv/bin/python
+      - echo
+      - cat
+      - tee
+    timeout: 120
