@@ -12,6 +12,7 @@ session:
 skills:
   dirs:
     - ./skills
+    - /home/ugubser/Github/Arcos-Issuance-LibreChat-PoC/ecofin-mcp/skills
 
 persistence:
   backend: file

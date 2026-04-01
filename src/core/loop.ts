@@ -163,8 +163,18 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         await session.addAssistantMessage(response);
         consecutiveTextOnly++;
 
-        if (consecutiveTextOnly >= 3) {
-          // Three consecutive text-only responses — genuinely done
+        // Check if the text looks like a final summary (contains completion signals
+        // and is substantial enough to be a summary, not just a brief remark)
+        const responseText = response.content
+          .filter((b): b is { type: "text"; text: string } => b.type === "text")
+          .map((b) => b.text)
+          .join("");
+        const looksComplete = responseText.length > 200 &&
+          /\b(complete|completed|finished|successful|done)\b/i.test(responseText);
+
+        if (consecutiveTextOnly >= 3 || (consecutiveTextOnly >= 1 && looksComplete)) {
+          // Genuinely done — either 3 consecutive text responses,
+          // or a substantial summary with completion signals
           await session.setCompleted();
           await session.forceCheckpoint();
           return;
