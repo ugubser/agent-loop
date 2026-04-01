@@ -138,7 +138,7 @@ program
     if (opts.task) console.log(`Task: ${opts.task}`);
 
     try {
-      const sessionId = await startNewSession(skill, config, store, opts.task);
+      const sessionId = await startNewSession(skill, config, store, opts.task, opts.config);
       console.log(`\nSession ${sessionId} finished.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

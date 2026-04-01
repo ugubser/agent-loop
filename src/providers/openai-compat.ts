@@ -102,8 +102,21 @@ export class OpenAICompatProvider {
       }
     }
 
-    // If content is empty (model returned nothing), add empty text
+    // Detect null/empty responses — the upstream API rejected the request silently
     if (content.length === 0) {
+      const usageTotal = (data.usage?.prompt_tokens ?? 0) + (data.usage?.completion_tokens ?? 0);
+      if (choice.finish_reason === null && usageTotal === 0) {
+        // API returned null content, null finish_reason, zero tokens — request was never processed.
+        // This typically means the request was too large for the upstream API.
+        throw new Error(
+          `LLM API returned empty response (null finish_reason, 0 tokens). ` +
+          `The request was likely too large. Messages: ${params.messages.length}, ` +
+          `estimated chars: ${JSON.stringify(params.messages).length}`
+        );
+      }
+      console.warn(
+        `[provider] Empty response from model. Raw API response: ${JSON.stringify(data)}`
+      );
       content.push({ type: "text", text: "" } satisfies TextBlock);
     }
 

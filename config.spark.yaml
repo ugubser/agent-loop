@@ -8,6 +8,7 @@ session:
   maxContext: 131000      # Model supports 131K context
   checkpointInterval: 5
   timeout: 21600
+  maxSteps: 60
 
 skills:
   dirs:

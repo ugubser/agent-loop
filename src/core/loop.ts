@@ -69,8 +69,9 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
   // Register signal handlers
   const cleanup = setupSignalHandlers(abortController, session, lock, store);
 
-  // Track whether we've already nudged the model to confirm completion
-  let completionConfirmed = false;
+  // Track consecutive text-only responses (no tool calls).
+  // After 3 in a row, we assume the model is genuinely done.
+  let consecutiveTextOnly = 0;
 
   try {
     while (!session.isTimedOut() && !session.isMaxSteps() && !abortController.signal.aborted) {
@@ -140,37 +141,55 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
       }
 
       if (toolUseBlocks.length === 0) {
-        await session.addAssistantMessage(response);
+        // Check if the response is truly empty (no text content at all)
+        const hasText = response.content.some(
+          (b) => b.type === "text" && b.text.trim().length > 0
+        );
 
-        // If this is the first time the model stopped without tool calls,
-        // nudge it to confirm it's really done before completing.
-        if (!completionConfirmed) {
-          completionConfirmed = true;
-          const nudge: Message = {
-            role: "user",
-            content: "Are you done? If there are remaining steps, unanswered questions, or warnings to fix, continue by calling the appropriate tool. If the task is truly complete with no issues, respond with your final summary.",
-          };
-          session.messages.push(nudge);
-          await store.appendTranscript(session.id, {
-            type: "message",
-            timestamp: new Date().toISOString(),
-            iteration: session.iteration,
-            data: nudge,
-          });
-          session.iteration++;
-          await store.writeState(session.id, session.state);
-          await session.checkpoint();
+        if (!hasText) {
+          // Empty response — model generation glitch. Silently retry without
+          // recording the empty message (avoids polluting context).
+          consecutiveTextOnly++;
+          if (consecutiveTextOnly >= 5) {
+            // Too many empty retries — give up
+            await session.setCompleted();
+            await session.forceCheckpoint();
+            return;
+          }
           continue;
         }
 
-        // Second time without tool calls — genuinely done
-        await session.setCompleted();
-        await session.forceCheckpoint();
-        return;
+        // Non-empty text without tool calls — model chose to respond with text
+        await session.addAssistantMessage(response);
+        consecutiveTextOnly++;
+
+        if (consecutiveTextOnly >= 3) {
+          // Three consecutive text-only responses — genuinely done
+          await session.setCompleted();
+          await session.forceCheckpoint();
+          return;
+        }
+
+        // Inject a directive continuation prompt.
+        const continuation: Message = {
+          role: "user",
+          content: "You responded with text instead of a tool call. If there are pending questions, unanswered steps, or remaining work, call the appropriate tool NOW. Only provide a final summary if the task is fully complete.",
+        };
+        session.messages.push(continuation);
+        await store.appendTranscript(session.id, {
+          type: "message",
+          timestamp: new Date().toISOString(),
+          iteration: session.iteration,
+          data: continuation,
+        });
+        session.iteration++;
+        await store.writeState(session.id, session.state);
+        await session.checkpoint();
+        continue;
       }
 
-      // Reset confirmation flag when model uses tools
-      completionConfirmed = false;
+      // Reset consecutive text-only counter when model uses tools
+      consecutiveTextOnly = 0;
 
       // 4. Execute tool calls
       await session.addAssistantMessage(response);
@@ -270,7 +289,8 @@ export async function startNewSession(
   skillName: string | undefined,
   config: AgentConfig,
   store: FileStore,
-  task?: string
+  task?: string,
+  configPath?: string
 ): Promise<string> {
   const skillCatalog = await discoverSkills(config.skills.dirs);
   const executor = new CliToolExecutor(
@@ -307,14 +327,14 @@ export async function startNewSession(
   // Build system prompt
   if (sessionSkillName === "auto") {
     skillSummaries = await loadSkillSummaries(config.skills.dirs);
-    session.systemPrompt = buildRouterPrompt({ skills: skillSummaries, task });
+    session.systemPrompt = buildRouterPrompt({ skills: skillSummaries, task, configPath });
     console.log(
       `Router mode — available skills: ${skillSummaries.map((s) => s.name).join(", ")}`
     );
   } else {
     const skillPath = skillCatalog.get(sessionSkillName)!;
     const skill = await loadSkill(skillPath);
-    session.systemPrompt = buildSystemPrompt({ skill, task });
+    session.systemPrompt = buildSystemPrompt({ skill, task, configPath });
   }
 
   // Add initial user message with the task

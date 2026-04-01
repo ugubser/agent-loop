@@ -116,8 +116,13 @@ export async function loadSkillSummaries(
 export function buildRouterPrompt(parts: {
   skills: SkillSummary[];
   task?: string;
+  configPath?: string;
 }): string {
-  const sections = [ROUTER_IDENTITY];
+  const sections = [ROUTER_IDENTITY, `\nCurrent date/time: ${new Date().toISOString()}`];
+
+  if (parts.configPath) {
+    sections.push(`\nConfig file: ${parts.configPath} — use this path when dispatching sub-sessions.`);
+  }
 
   sections.push("\n## Available Skills\n");
   for (const skill of parts.skills) {
@@ -135,8 +140,13 @@ export function buildSystemPrompt(parts: {
   skill: SkillDef;
   task?: string;
   availableSkills?: SkillSummary[];
+  configPath?: string;
 }): string {
-  const sections = [BASE_IDENTITY];
+  const sections = [BASE_IDENTITY, `\nCurrent date/time: ${new Date().toISOString()}`];
+
+  if (parts.configPath) {
+    sections.push(`\nConfig file: ${parts.configPath} — use this path when dispatching sub-sessions.`);
+  }
 
   if (parts.availableSkills?.length) {
     sections.push("\n## Available Skills (use use_skill to switch)\n");

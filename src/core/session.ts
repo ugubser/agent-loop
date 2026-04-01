@@ -13,7 +13,7 @@ import type {
 } from "../types.js";
 import type { FileStore } from "../persistence/file-store.js";
 
-const TOOL_RESULT_MAX_CHARS = 40_000; // ~10,000 tokens at 4 chars/token
+const TOOL_RESULT_MAX_CHARS = 100_000; // ~25,000 tokens at 4 chars/token
 const TRUNCATION_MARKER = "\n\n[TRUNCATED — result exceeded size limit]";
 
 export class Session {

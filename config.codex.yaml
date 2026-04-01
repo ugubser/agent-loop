@@ -2,13 +2,14 @@ model:
   provider: openai-compat
   model: gpt-5.3-codex
   maxTokens: 200000
-  baseUrl: http://127.0.0.1:10531/v1
-  apiKey: unused
+  baseUrl: http://localhost:8888/v1
+  apiKey: pwd
 
 session:
   maxContext: 1000000     # Codex supports 1M context
   checkpointInterval: 5
   timeout: 21600
+  maxSteps: 60
 
 skills:
   dirs:

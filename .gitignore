@@ -4,3 +4,9 @@ dist/
 sessions/
 *.tsbuildinfo
 .DS_Store
+skills/ecofin-build.md
+.env.old
+config.spark.yaml
+config.spark-anthropic.yaml
+config.spark.yaml
+skills/ecofin-orchestrator.md

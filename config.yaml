@@ -1,12 +1,13 @@
 model:
   provider: anthropic
   model: claude-sonnet-4-6
-  maxTokens: 8192
+  maxTokens: 16384
 
 session:
   maxContext: 200000
   checkpointInterval: 5
-  timeout: 21600  # 6 hours
+  timeout: 21600
+  maxSteps: 60
 
 skills:
   dirs:
@@ -20,10 +21,13 @@ tools:
   cli:
     allowedCommands:
       - agent-browser
+      - bash
+      - bun
       - curl
       - jq
       - grep
       - python3
+      - /home/ugubser/Github/Arcos-Issuance-LibreChat-PoC/ecofin-mcp/venv/bin/python
       - echo
       - cat
       - tee
