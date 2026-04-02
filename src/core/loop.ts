@@ -17,6 +17,7 @@ import {
   buildRouterPrompt,
 } from "../skills/loader.js";
 import { FileStore } from "../persistence/file-store.js";
+import { trimToolContext } from "./context-trim.js";
 import type { ToolSchema, SkillSummary } from "../types.js";
 
 // Provider interface — any object with complete() and summarize()
@@ -272,6 +273,15 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           await session.addToolResult(toolCall.id, `ERROR: ${message}`, true);
+        }
+
+        // Context trimming: if the tool has keepLast configured, trim older pairs
+        const keepLast = tool.context?.keepLast;
+        if (keepLast !== undefined) {
+          const trimmed = trimToolContext(session.messages, toolCall.name, keepLast);
+          if (trimmed !== session.messages) {
+            session.replaceMessages(trimmed);
+          }
         }
       }
 

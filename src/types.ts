@@ -97,6 +97,9 @@ export interface CliToolDef {
   env?: Record<string, string>; // extra environment variables for this tool
   timeout: number; // seconds
   idempotent: boolean;
+  context?: {
+    keepLast?: number; // only keep the last N call+result pairs in context
+  };
 }
 
 // Tool schema for Anthropic API

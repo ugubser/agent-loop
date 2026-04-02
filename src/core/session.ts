@@ -147,11 +147,11 @@ export class Session {
     const msg: Message = { role: "assistant", content: response.content };
     this._messages.push(msg);
 
-    // Update token usage from API response
+    // Accumulate token usage across all API calls
     this._state.tokenUsage = {
-      input: response.usage.input,
-      output: response.usage.output,
-      total: response.usage.input + response.usage.output,
+      input: this._state.tokenUsage.input + response.usage.input,
+      output: this._state.tokenUsage.output + response.usage.output,
+      total: this._state.tokenUsage.total + response.usage.input + response.usage.output,
     };
 
     const result = await this.store.appendTranscript(this._state.id, {
