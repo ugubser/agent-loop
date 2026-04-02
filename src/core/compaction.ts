@@ -1,6 +1,10 @@
 import type { Message, ContentBlock, TranscriptEntry } from "../types.js";
 import type { Session } from "./session.js";
-import type { AnthropicProvider } from "../providers/anthropic.js";
+
+/** Minimal provider interface needed for summarization */
+interface Summarizer {
+  summarize(text: string, model: string, targetTokens?: number): Promise<string>;
+}
 
 /**
  * Compact session messages when context approaches the limit.
@@ -13,7 +17,7 @@ import type { AnthropicProvider } from "../providers/anthropic.js";
  */
 export async function compactSession(
   session: Session,
-  provider: AnthropicProvider,
+  provider: Summarizer,
   model: string,
   log?: (entry: TranscriptEntry) => void
 ): Promise<void> {

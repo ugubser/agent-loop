@@ -278,9 +278,11 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         // Context trimming: if the tool has keepLast configured, trim older pairs
         const keepLast = tool.context?.keepLast;
         if (keepLast !== undefined) {
+          const before = session.messages.length;
           const trimmed = trimToolContext(session.messages, toolCall.name, keepLast);
           if (trimmed !== session.messages) {
             session.replaceMessages(trimmed);
+            console.log(`[trim] ${toolCall.name}: ${before} → ${trimmed.length} messages (keepLast=${keepLast})`);
           }
         }
       }

@@ -275,11 +275,8 @@ export class Session {
   // --- Context budget ---
 
   contextTokens(): number {
-    // Primary: from last API response usage
-    if (this._state.tokenUsage.total > 0) {
-      return this._state.tokenUsage.input; // input tokens = context sent to model
-    }
-    // Fallback: character-based estimate (4 chars ≈ 1 token)
+    // Always estimate from current messages — API usage becomes stale after
+    // compaction or context trimming removes messages.
     return this.estimateTokens();
   }
 
