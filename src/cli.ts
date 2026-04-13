@@ -446,7 +446,7 @@ function printTranscriptEntry(
                 const c = String(b.content ?? "");
                 const isErr = b.is_error;
                 const color = isErr ? C.red : C.green;
-                console.log(`${color}  [${b.tool_use_id}] ${c.slice(0, 50000)}${C.reset}`);
+                console.log(`${color}  [${b.tool_use_id}] ${c}${C.reset}`);
               }
             }
           } else {
@@ -464,9 +464,9 @@ function printTranscriptEntry(
           console.log(`${prefix} ${C.red}${C.bold}← ASSISTANT${C.reset}`);
           for (const b of blocks) {
             if (b.type === "text" && b.text) {
-              console.log(`${C.red}  ${String(b.text).slice(0, 50000)}${C.reset}`);
+              console.log(`${C.red}  ${String(b.text)}${C.reset}`);
             } else if (b.type === "tool_use") {
-              console.log(`${C.red}  CALL ${C.bold}${b.name}${C.reset}${C.red}(${JSON.stringify(b.input).slice(0, 50000)})${C.reset}`);
+              console.log(`${C.red}  CALL ${C.bold}${b.name}${C.reset}${C.red}(${JSON.stringify(b.input)})${C.reset}`);
             }
           }
         } else {
@@ -496,11 +496,11 @@ function printTranscriptEntry(
             const c = String(b.content ?? "");
             const isErr = b.is_error;
             const color = isErr ? C.red : C.green;
-            console.log(`${color}  [${b.tool_use_id}] ${c.slice(0, 50000)}${C.reset}`);
+            console.log(`${color}  [${b.tool_use_id}] ${c}${C.reset}`);
           }
         }
       } else if (debug) {
-        console.log(`${prefix} ${C.green}tool_result: ${JSON.stringify(data).slice(0, 50000)}${C.reset}`);
+        console.log(`${prefix} ${C.green}tool_result: ${JSON.stringify(data)}${C.reset}`);
       } else {
         console.log(`${prefix} ${C.green}tool_result: ${JSON.stringify(data).slice(0, 200)}${C.reset}`);
       }
