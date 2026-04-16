@@ -4,7 +4,7 @@ export type SessionStatus = "running" | "paused" | "completed" | "crashed";
 export interface SessionState {
   id: string;
   status: SessionStatus;
-  reason?: string; // e.g., "provider_error", "signal", "timeout", "disk_full"
+  reason?: string; // e.g., "provider_error", "signal", "timeout", "disk_full", "loop_detected", "token_budget"
   skillName: string;
   startedAt: string; // ISO 8601
   updatedAt: string;
@@ -29,12 +29,14 @@ export interface AgentConfig {
     apiKey?: string; // For openai-compat: API key (defaults to "lm-studio")
     authToken?: string; // For anthropic: OAuth Bearer token (alternative to apiKey)
     requestTimeout?: number; // Milliseconds before aborting an LLM request (default: 300000)
+    providerRetries?: number; // Number of retries on provider error (default: 3)
   };
   session: {
     maxContext: number;
     checkpointInterval: number;
     timeout: number; // seconds
     maxSteps?: number;
+    maxTotalTokens?: number; // Cap cumulative input tokens; pauses session when exceeded
   };
   skills: {
     dirs: string[];
@@ -99,6 +101,7 @@ export interface CliToolDef {
   idempotent: boolean;
   context?: {
     keepLast?: number; // only keep the last N call+result pairs in context
+    preserveResult?: boolean; // if true, results from this tool are never auto-trimmed
   };
 }
 

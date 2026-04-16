@@ -80,6 +80,15 @@ export class CliToolExecutor {
     return this.tools.get(name);
   }
 
+  /** Return names of all tools with context.preserveResult=true */
+  preservedToolNames(): Set<string> {
+    const result = new Set<string>();
+    for (const [name, tool] of this.tools) {
+      if (tool.context?.preserveResult) result.add(name);
+    }
+    return result;
+  }
+
   async execute(
     name: string,
     input: Record<string, unknown>
@@ -106,7 +115,7 @@ export class CliToolExecutor {
         } catch (parseErr) {
           return `ERROR: Malformed JSON in tool argument. ${diagnoseJson(trimmed)} ` +
             `Parser: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}. ` +
-            `Try splitting into smaller calls.`;
+            `Fix the JSON and resend. Here is what you sent:\n${trimmed.slice(0, 2000)}`;
         }
       }
     }

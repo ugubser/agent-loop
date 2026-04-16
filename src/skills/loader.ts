@@ -28,8 +28,11 @@ export async function loadSkill(skillPath: string): Promise<SkillDef> {
         env: Object.keys(toolEnv).length > 0 ? toolEnv : undefined,
         timeout: parseTimeout(t.timeout),
         idempotent: t.idempotent ?? true,
-        context: t.context?.keep_last != null
-          ? { keepLast: t.context.keep_last }
+        context: (t.context?.keep_last != null || t.context?.preserve_result != null)
+          ? {
+              keepLast: t.context?.keep_last,
+              preserveResult: t.context?.preserve_result ?? undefined,
+            }
           : undefined,
       });
     }

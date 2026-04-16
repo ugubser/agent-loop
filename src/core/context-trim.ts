@@ -4,9 +4,133 @@
  * When a tool has `context.keepLast` configured, older call+result pairs
  * are replaced with compact summaries in the message array. The full
  * history remains in the transcript (JSONL) for debugging.
+ *
+ * `autoTrimConsumedResults` provides a generic "consumed" heuristic:
+ * any tool_result from a prior iteration that the LLM has already acted
+ * on (i.e., it is NOT from the current iteration) gets its content
+ * replaced with a compact summary. This prevents large schema/RAG
+ * results from persisting across dozens of iterations.
  */
 
 import type { Message, ContentBlock, ToolUseBlock, ToolResultBlock } from "../types.js";
+
+/** Minimum content length to bother trimming — small results aren't worth it */
+const AUTO_TRIM_MIN_CHARS = 500;
+
+/**
+ * Trim tool_result content from all iterations EXCEPT the most recent one.
+ * Results from the current iteration are kept intact so the LLM can see
+ * what just happened. Older results are replaced with a one-line summary.
+ *
+ * Tools listed in `preservedTools` are never trimmed — their results stay
+ * in context for the entire session. Configure per-tool via
+ * `context.preserveResult: true` in the skill definition.
+ *
+ * Returns the original array if no trimming occurred.
+ */
+export function autoTrimConsumedResults(
+  messages: Message[],
+  preservedTools?: Set<string>,
+): Message[] {
+  // Find the index of the last assistant message — everything after it
+  // (inclusive) is the "current iteration" and should not be trimmed.
+  let lastAssistantIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      lastAssistantIdx = i;
+      break;
+    }
+  }
+  if (lastAssistantIdx <= 0) return messages; // nothing to trim
+
+  // Collect tool_use IDs from the current iteration's assistant message
+  // so we can protect their matching tool_results (which come after).
+  const currentToolIds = new Set<string>();
+  const lastAssistant = messages[lastAssistantIdx];
+  if (Array.isArray(lastAssistant.content)) {
+    for (const block of lastAssistant.content) {
+      if (block.type === "tool_use") {
+        currentToolIds.add((block as ToolUseBlock).id);
+      }
+    }
+  }
+
+  // Build a map: tool_use_id → tool name (from all assistant messages)
+  const toolNames = new Map<string, string>();
+  for (const msg of messages) {
+    if (msg.role !== "assistant" || typeof msg.content === "string") continue;
+    for (const block of msg.content as ContentBlock[]) {
+      if (block.type === "tool_use") {
+        toolNames.set((block as ToolUseBlock).id, (block as ToolUseBlock).name);
+      }
+    }
+  }
+
+  let changed = false;
+  const result: Message[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    // Only process user messages that contain tool_result blocks
+    if (msg.role !== "user" || typeof msg.content === "string") {
+      result.push(msg);
+      continue;
+    }
+
+    const blocks = msg.content as ContentBlock[];
+    let msgChanged = false;
+    const newBlocks: ContentBlock[] = [];
+
+    for (const block of blocks) {
+      if (block.type !== "tool_result") {
+        newBlocks.push(block);
+        continue;
+      }
+
+      const tr = block as ToolResultBlock;
+
+      // Protect results from the current iteration
+      if (currentToolIds.has(tr.tool_use_id)) {
+        newBlocks.push(block);
+        continue;
+      }
+
+      // Skip if already trimmed or too small to bother
+      if (tr.content.length < AUTO_TRIM_MIN_CHARS ||
+          tr.content.startsWith("[Prior ")) {
+        newBlocks.push(block);
+        continue;
+      }
+
+      // Skip tools marked with preserveResult in the skill config
+      const toolName = toolNames.get(tr.tool_use_id);
+      if (toolName && preservedTools?.has(toolName)) {
+        newBlocks.push(block);
+        continue;
+      }
+
+      // Trim: replace content with a compact summary
+      const name = toolName ?? "tool";
+      const preview = tr.content.slice(0, 120).replace(/\n/g, " ");
+      const trimmedContent =
+        `[Prior ${name} result: ${preview}… (${tr.content.length} chars trimmed)]`;
+
+      newBlocks.push({
+        type: "tool_result",
+        tool_use_id: tr.tool_use_id,
+        content: trimmedContent,
+        is_error: tr.is_error,
+      } as ToolResultBlock);
+      msgChanged = true;
+      changed = true;
+    }
+
+    result.push(msgChanged ? { ...msg, content: newBlocks } : msg);
+  }
+
+  return changed ? result : messages;
+}
 
 interface ToolPair {
   /** Index of the assistant message containing the tool_use block */

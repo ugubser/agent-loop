@@ -17,7 +17,7 @@ import {
   buildRouterPrompt,
 } from "../skills/loader.js";
 import { FileStore } from "../persistence/file-store.js";
-import { trimToolContext } from "./context-trim.js";
+import { trimToolContext, autoTrimConsumedResults } from "./context-trim.js";
 import type { ToolSchema, SkillSummary } from "../types.js";
 
 // Provider interface — any object with complete() and summarize()
@@ -74,8 +74,23 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
   // After 3 in a row, we assume the model is genuinely done.
   let consecutiveTextOnly = 0;
 
+  // Track consecutive malformed JSON errors for the same tool
+  let consecutiveMalformedJson = 0;
+
+  // Loop detection: rolling window of tool call signatures
+  const recentToolSigs: string[] = [];
+  let loopWarningCount = 0;
+
+  // Token budget warning (fire once)
+  let tokenWarningIssued = false;
+
   try {
-    while (!session.isTimedOut() && !session.isMaxSteps() && !abortController.signal.aborted) {
+    while (
+      !session.isTimedOut() &&
+      !session.isMaxSteps() &&
+      !session.isTokenBudgetExhausted() &&
+      !abortController.signal.aborted
+    ) {
       // 1. Check compaction threshold
       const { needed } = session.getCompactionTarget();
       if (needed !== "none") {
@@ -89,28 +104,53 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         );
       }
 
-      // 2. Call the model — include use_skill alongside CLI tools when catalog exists
+      // 2. Call the model with retry on transient errors
+      const maxRetries = config.model.providerRetries ?? 3;
+      const retryDelays = [5000, 15000, 30000];
       let response;
-      try {
-        const cliSchemas = executor.schemas();
-        const allTools = ctx.skillCatalog
-          ? [USE_SKILL_SCHEMA, ...cliSchemas]
-          : cliSchemas;
+      let lastProviderError: unknown;
 
-        response = await provider.complete({
-          model: config.model.model,
-          maxTokens: config.model.maxTokens,
-          system: session.systemPrompt,
-          messages: session.messages,
-          tools: allTools.length > 0 ? allTools : undefined,
-        });
-      } catch (err: unknown) {
-        // Provider error — pause session
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`\nProvider error: ${message}`);
-        if (err instanceof Error && err.name === "TimeoutError") {
-          console.error("Hint: The LLM request timed out. The model may be too slow or the server unresponsive.");
+      const cliSchemas = executor.schemas();
+      const allTools = ctx.skillCatalog
+        ? [USE_SKILL_SCHEMA, ...cliSchemas]
+        : cliSchemas;
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          response = await provider.complete({
+            model: config.model.model,
+            maxTokens: config.model.maxTokens,
+            system: session.systemPrompt,
+            messages: session.messages,
+            tools: allTools.length > 0 ? allTools : undefined,
+          });
+          break; // success
+        } catch (err: unknown) {
+          lastProviderError = err;
+          const message = err instanceof Error ? err.message : String(err);
+          const errName = err instanceof Error ? (err.constructor?.name ?? err.name ?? "Error") : typeof err;
+          console.error(`\nProvider error [${errName}] attempt ${attempt + 1}/${maxRetries} at iteration ${session.iteration}: ${message}`);
+
+          if (attempt < maxRetries - 1) {
+            const delay = retryDelays[attempt] ?? 30000;
+            console.error(`Retrying in ${delay / 1000}s...`);
+            await new Promise(r => setTimeout(r, delay));
+          }
         }
+      }
+
+      if (!response) {
+        // All retries exhausted — pause session
+        const message = lastProviderError instanceof Error ? lastProviderError.message : String(lastProviderError);
+        const errName = lastProviderError instanceof Error
+          ? (lastProviderError.constructor?.name ?? (lastProviderError as Error).name ?? "Error")
+          : typeof lastProviderError;
+        const stack = lastProviderError instanceof Error ? lastProviderError.stack : undefined;
+        console.error(`\nProvider error [${errName}] after ${maxRetries} attempts at iteration ${session.iteration}: ${message}`);
+        if (stack) {
+          console.error(`Stack: ${stack.split("\n").slice(0, 5).join("\n")}`);
+        }
+        console.error(`Context: messages=${session.messages.length}, model=${config.model.model}, baseUrl=${config.model.baseUrl ?? "default"}`);
         await session.setPaused("provider_error");
         await session.forceCheckpoint();
         return;
@@ -205,6 +245,14 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
       // 4. Execute tool calls
       await session.addAssistantMessage(response);
 
+      // Token budget warning (stderr only, fire once)
+      if (!tokenWarningIssued && session.isTokenBudgetWarning()) {
+        const usage = session.state.tokenUsage.input;
+        const max = config.session.maxTotalTokens!;
+        console.warn(`[budget] Token budget 80% consumed (${usage} / ${max} input tokens)`);
+        tokenWarningIssued = true;
+      }
+
       for (const toolCall of toolUseBlocks) {
         if (abortController.signal.aborted) break;
 
@@ -287,7 +335,76 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         }
       }
 
-      // 5. Increment iteration, persist state, and checkpoint
+      // 5a. Malformed JSON counter — detect repeated failures
+      const lastResults = session.messages[session.messages.length - 1];
+      if (lastResults?.role === "user" && Array.isArray(lastResults.content)) {
+        const hasJsonError = (lastResults.content as Array<{ type: string; content?: string }>).some(
+          b => b.type === "tool_result" && typeof b.content === "string" && b.content.startsWith("ERROR: Malformed JSON")
+        );
+        if (hasJsonError) {
+          consecutiveMalformedJson++;
+          if (consecutiveMalformedJson >= 3) {
+            const advisory: Message = {
+              role: "user",
+              content: "You have failed to produce valid JSON 3 times in a row. Simplify your response — send fewer fields or split into multiple smaller calls.",
+            };
+            session.messages.push(advisory);
+            await store.appendTranscript(session.id, {
+              type: "message",
+              timestamp: new Date().toISOString(),
+              iteration: session.iteration,
+              data: advisory,
+            });
+            consecutiveMalformedJson = 0;
+          }
+        } else {
+          consecutiveMalformedJson = 0;
+        }
+      }
+
+      // 5b. Loop detection — track tool call signatures
+      for (const toolCall of toolUseBlocks) {
+        const firstVal = Object.values(toolCall.input)[0];
+        const sig = `${toolCall.name}:${typeof firstVal === "string" ? firstVal : JSON.stringify(firstVal)}`;
+        recentToolSigs.push(sig);
+        if (recentToolSigs.length > 6) recentToolSigs.shift();
+      }
+
+      if (recentToolSigs.length >= 3) {
+        const last3 = recentToolSigs.slice(-3);
+        if (last3[0] === last3[1] && last3[1] === last3[2]) {
+          loopWarningCount++;
+          if (loopWarningCount >= 2) {
+            console.error(`\nLoop detected: tool called identically 6+ times at iteration ${session.iteration}`);
+            await session.setPaused("loop_detected");
+            await session.forceCheckpoint();
+            return;
+          }
+          // First warning — inject advisory into messages
+          const advisory: Message = {
+            role: "user",
+            content: "WARNING: You appear to be in a loop — the last 3 tool calls produced the same result. Change your approach or accept the current state and move on.",
+          };
+          session.messages.push(advisory);
+          await store.appendTranscript(session.id, {
+            type: "message",
+            timestamp: new Date().toISOString(),
+            iteration: session.iteration,
+            data: advisory,
+          });
+        }
+      }
+
+      // 5c. Auto-trim consumed tool results from prior iterations
+      const autoTrimmed = autoTrimConsumedResults(session.messages, executor.preservedToolNames());
+      if (autoTrimmed !== session.messages) {
+        const beforeTokens = session.contextTokens();
+        session.replaceMessages(autoTrimmed);
+        const afterTokens = session.contextTokens();
+        console.log(`[auto-trim] Trimmed consumed results: ${beforeTokens} → ${afterTokens} est. tokens`);
+      }
+
+      // 6. Increment iteration, persist state, and checkpoint
       session.iteration++;
       await store.writeState(session.id, session.state);
       await session.checkpoint();
@@ -300,6 +417,8 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
       await session.setPaused("timeout");
     } else if (session.isMaxSteps()) {
       await session.setPaused("max_steps");
+    } else if (session.isTokenBudgetExhausted()) {
+      await session.setPaused("token_budget");
     }
     await session.forceCheckpoint();
   } finally {

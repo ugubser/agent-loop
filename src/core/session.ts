@@ -330,4 +330,16 @@ export class Session {
     if (!max) return false;
     return this._state.iteration >= max;
   }
+
+  isTokenBudgetExhausted(): boolean {
+    const max = this._state.config.session.maxTotalTokens;
+    if (!max) return false;
+    return this._state.tokenUsage.input >= max;
+  }
+
+  isTokenBudgetWarning(): boolean {
+    const max = this._state.config.session.maxTotalTokens;
+    if (!max) return false;
+    return this._state.tokenUsage.input >= max * 0.8;
+  }
 }

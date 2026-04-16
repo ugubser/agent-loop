@@ -54,22 +54,47 @@ export class OpenAICompatProvider {
       body.tools = openaiTools;
     }
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(this.requestTimeout),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`LLM API error (${response.status}): ${text}`);
+    const requestStart = Date.now();
+    const requestBodySize = JSON.stringify(body).length;
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.requestTimeout),
+      });
+    } catch (fetchErr: unknown) {
+      const elapsed = ((Date.now() - requestStart) / 1000).toFixed(1);
+      const err = fetchErr instanceof Error ? fetchErr : new Error(String(fetchErr));
+      const errName = err.constructor?.name ?? "Unknown";
+      throw new Error(
+        `LLM fetch failed after ${elapsed}s [${errName}: ${err.message}]. ` +
+        `URL: ${this.baseUrl}/chat/completions, ` +
+        `request body: ${(requestBodySize / 1024).toFixed(0)}KB, ` +
+        `timeout: ${this.requestTimeout}ms, ` +
+        `messages: ${params.messages.length}`
+      );
     }
 
-    const data = (await response.json()) as OpenAIChatResponse;
+    if (!response.ok) {
+      const elapsed = ((Date.now() - requestStart) / 1000).toFixed(1);
+      const text = await response.text();
+      throw new Error(`LLM API error after ${elapsed}s (${response.status}): ${text}`);
+    }
+
+    let data: OpenAIChatResponse;
+    try {
+      data = (await response.json()) as OpenAIChatResponse;
+    } catch (jsonErr: unknown) {
+      const elapsed = ((Date.now() - requestStart) / 1000).toFixed(1);
+      throw new Error(
+        `LLM response JSON parse failed after ${elapsed}s: ${jsonErr instanceof Error ? jsonErr.message : String(jsonErr)}`
+      );
+    }
     const choice = data.choices[0];
     if (!choice) {
       throw new Error("LLM returned no choices");
