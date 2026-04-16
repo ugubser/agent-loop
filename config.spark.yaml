@@ -1,19 +1,20 @@
 model:
   provider: lmstudio
-  model: gpt-oss-120b-F16.gguf
-  maxTokens: 16384
+  model: nemotron-3-super
+  maxTokens: 32768
   baseUrl: http://spark:8080/v1
+  requestTimeout: 600000   # 10 minutes
 
 session:
   maxContext: 131000      # Model supports 131K context
   checkpointInterval: 5
-  timeout: 21600
+  timeout: 600000
   maxSteps: 60
 
 skills:
   dirs:
     - ./skills
-
+    - /home/ugubser/Github/ecofin-mcp-graph/ecofin-mcp/skills
 persistence:
   backend: file
   dir: ./sessions
