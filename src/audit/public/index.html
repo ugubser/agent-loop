@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Loop Audit</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <h1>Agent Loop</h1>
+        <input id="search" type="text" placeholder="Filter sessions...">
+      </div>
+      <ul id="session-list"></ul>
+    </aside>
+    <main id="main-panel">
+      <div id="empty-state">
+        <p>Select a session to inspect</p>
+      </div>
+      <div id="session-detail" hidden>
+        <header id="session-header"></header>
+        <div id="timeline"></div>
+      </div>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

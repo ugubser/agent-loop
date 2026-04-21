@@ -83,7 +83,7 @@ export interface ToolResultBlock {
 
 // Transcript entry (JSONL lines)
 export interface TranscriptEntry {
-  type: "message" | "tool_result" | "compaction" | "status_change" | "error";
+  type: "message" | "tool_result" | "compaction" | "status_change" | "error" | "llm_request" | "llm_response";
   timestamp: string;
   iteration?: number;
   data: unknown;

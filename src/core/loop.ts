@@ -115,15 +115,25 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         ? [USE_SKILL_SCHEMA, ...cliSchemas]
         : cliSchemas;
 
+      const llmRequest = {
+        model: config.model.model,
+        maxTokens: config.model.maxTokens,
+        system: session.systemPrompt,
+        messages: session.messages,
+        tools: allTools.length > 0 ? allTools : undefined,
+      };
+
+      // Log the full LLM request
+      await store.appendTranscript(session.id, {
+        type: "llm_request",
+        timestamp: new Date().toISOString(),
+        iteration: session.iteration,
+        data: llmRequest,
+      });
+
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
-          response = await provider.complete({
-            model: config.model.model,
-            maxTokens: config.model.maxTokens,
-            system: session.systemPrompt,
-            messages: session.messages,
-            tools: allTools.length > 0 ? allTools : undefined,
-          });
+          response = await provider.complete(llmRequest);
           break; // success
         } catch (err: unknown) {
           lastProviderError = err;
@@ -155,6 +165,14 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         await session.forceCheckpoint();
         return;
       }
+
+      // Log the full LLM response
+      await store.appendTranscript(session.id, {
+        type: "llm_response",
+        timestamp: new Date().toISOString(),
+        iteration: session.iteration,
+        data: response,
+      });
 
       // 3. Check for truncated output (max_tokens hit)
       const toolUseBlocks = response.content.filter(

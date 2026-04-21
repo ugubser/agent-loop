@@ -34,3 +34,4 @@ tools:
       - cat
       - tee
     timeout: 120
+    maxResultChars: 500000

@@ -517,6 +517,17 @@ function printTranscriptEntry(
   }
 }
 
+program
+  .command("audit")
+  .description("Launch the audit/inspection web UI")
+  .option("-c, --config <path>", "Config file path", "config.yaml")
+  .option("-p, --port <number>", "Port number", "3900")
+  .action(async (opts: { config: string; port: string }) => {
+    const config = loadConfig(opts.config);
+    const { startAuditServer } = await import("./audit/server.js");
+    startAuditServer(config.persistence.dir, parseInt(opts.port));
+  });
+
 // Only parse when run directly (not when imported for testing)
 if (import.meta.main) {
   program.parse();
