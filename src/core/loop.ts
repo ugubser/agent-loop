@@ -377,10 +377,10 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         }
       }
 
-      // 5b. Loop detection — track tool call signatures
+      // 5b. Loop detection — track tool call signatures (hash full input
+      //     so calls with different arguments are not flagged as loops)
       for (const toolCall of toolUseBlocks) {
-        const firstVal = Object.values(toolCall.input)[0];
-        const sig = `${toolCall.name}:${typeof firstVal === "string" ? firstVal : JSON.stringify(firstVal)}`;
+        const sig = `${toolCall.name}:${JSON.stringify(toolCall.input)}`;
         recentToolSigs.push(sig);
         if (recentToolSigs.length > 6) recentToolSigs.shift();
       }

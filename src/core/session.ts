@@ -13,7 +13,7 @@ import type {
 } from "../types.js";
 import type { FileStore } from "../persistence/file-store.js";
 
-const TOOL_RESULT_MAX_CHARS = 100_000; // ~25,000 tokens at 4 chars/token
+const DEFAULT_TOOL_RESULT_MAX_CHARS = 100_000; // ~25,000 tokens at 4 chars/token
 const TRUNCATION_MARKER = "\n\n[TRUNCATED — result exceeded size limit]";
 
 export class Session {
@@ -173,10 +173,11 @@ export class Session {
     isError = false
   ): Promise<void> {
     // Truncate large results
+    const maxChars = this._state.config.tools?.cli?.maxResultChars ?? DEFAULT_TOOL_RESULT_MAX_CHARS;
     let truncated = content;
-    if (content.length > TOOL_RESULT_MAX_CHARS) {
+    if (content.length > maxChars) {
       truncated =
-        content.slice(0, TOOL_RESULT_MAX_CHARS) + TRUNCATION_MARKER;
+        content.slice(0, maxChars) + TRUNCATION_MARKER;
     }
 
     const block: ToolResultBlock = {

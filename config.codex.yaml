@@ -14,7 +14,7 @@ session:
 skills:
   dirs:
     - ./skills
-    - /home/ugubser/Github/Arcos-Issuance-LibreChat-PoC/ecofin-mcp/skills
+    - /home/ugubser/Github/ecofin-mcp-graph/ecofin-mcp/skills
 
 persistence:
   backend: file
@@ -35,3 +35,4 @@ tools:
       - cat
       - tee
     timeout: 120
+    maxResultChars: 500000   # Codex handles large results; default is 100K

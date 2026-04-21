@@ -49,6 +49,7 @@ export interface AgentConfig {
     cli: {
       allowedCommands: string[];
       timeout: number; // seconds
+      maxResultChars?: number; // Truncate tool results beyond this (default: 100000)
     };
   };
 }
