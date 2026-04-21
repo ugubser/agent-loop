@@ -2,7 +2,7 @@ model:
   provider: openai-compat
   model: gpt-5.3-codex
   maxTokens: 200000
-  baseUrl: http://localhost:8888/v1
+  baseUrl: http://localhost:8080/v1
   apiKey: pwd
 
 session:

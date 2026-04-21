@@ -1,6 +1,6 @@
 model:
   provider: lmstudio
-  model: nemotron-3-super
+  model: gpt-oss-120b-F16.gguf
   maxTokens: 32768
   baseUrl: http://spark:8080/v1
   requestTimeout: 600000   # 10 minutes

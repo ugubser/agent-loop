@@ -188,8 +188,6 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         );
 
         if (!hasText) {
-          // Empty response — model generation glitch. Silently retry without
-          // recording the empty message (avoids polluting context).
           consecutiveTextOnly++;
           if (consecutiveTextOnly >= 5) {
             // Too many empty retries — give up
@@ -197,6 +195,23 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
             await session.forceCheckpoint();
             return;
           }
+
+          // Inject a nudge so the retry has different context.
+          // First empty gets a gentle poke; subsequent ones escalate.
+          const nudge: Message = {
+            role: "user",
+            content: consecutiveTextOnly === 1
+              ? "Your previous response was empty. Review the last tool result and continue with the next step."
+              : `Empty response ${consecutiveTextOnly} times in a row. You MUST call a tool or provide a final summary. Do not return an empty response.`,
+          };
+          session.messages.push(nudge);
+          await store.appendTranscript(session.id, {
+            type: "message",
+            timestamp: new Date().toISOString(),
+            iteration: session.iteration,
+            data: nudge,
+          });
+          console.error(`[empty-response] Injected nudge (attempt ${consecutiveTextOnly}/5) at iteration ${session.iteration}`);
           continue;
         }
 
