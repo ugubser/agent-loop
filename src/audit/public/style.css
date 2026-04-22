@@ -328,6 +328,65 @@ body {
 }
 .md-li { display: block; padding-left: 8px; }
 
+/* Collapsible sections inside entries */
+.tl-collapse {
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+.tl-collapse-summary {
+  padding: 6px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  background: #161b22;
+  user-select: none;
+  list-style: none;
+}
+.tl-collapse-summary::-webkit-details-marker { display: none; }
+.tl-collapse-summary::before {
+  content: '\25B6';
+  font-size: 8px;
+  color: #484f58;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.tl-collapse[open] > .tl-collapse-summary::before { transform: rotate(90deg); }
+.tl-collapse-title {
+  font-weight: 600;
+  color: #c9d1d9;
+  flex-shrink: 0;
+}
+.tl-collapse-meta {
+  color: #484f58;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.tl-collapse-body {
+  padding: 8px 10px;
+  border-top: 1px solid #21262d;
+  max-height: 500px;
+  overflow-y: auto;
+}
+/* Nested collapses get slightly indented */
+.tl-collapse .tl-collapse {
+  margin-left: 4px;
+}
+
+/* Inline key-value fields for small values */
+.tl-inline-field {
+  padding: 2px 0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* JSON syntax highlighting */
 /* --- System prompt --- */
 .system-prompt {
