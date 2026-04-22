@@ -10,6 +10,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
 import type { SessionState, TranscriptEntry } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,71 @@ function sanitizeState(state: SessionState): SessionState {
   }
   return s;
 }
+
+// ---------------------------------------------------------------------------
+// Session management helpers
+// ---------------------------------------------------------------------------
+
+/** Get PID of a running session from its lock file */
+function getSessionPid(dir: string, id: string): number | null {
+  try {
+    const lockFile = path.join(dir, id, "session.lock");
+    const content = fs.readFileSync(lockFile, "utf-8").trim();
+    const pid = parseInt(content, 10);
+    if (pid && isProcessAlive(pid)) return pid;
+  } catch { /* no lock file */ }
+  return null;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/** List available config files (config*.yaml in cwd) */
+function listConfigs(): string[] {
+  try {
+    return fs.readdirSync(".").filter((f) => f.startsWith("config") && f.endsWith(".yaml")).sort();
+  } catch { return []; }
+}
+
+/** Discover skills from a config's skill dirs */
+function listSkills(configPath: string): Array<{ name: string; path: string }> {
+  try {
+    const raw = fs.readFileSync(configPath, "utf-8");
+    // Simple YAML parse for skills.dirs — avoid importing yaml just for this
+    const dirsMatch = raw.match(/skills:\s*\n\s+dirs:\s*\n((?:\s+-\s+.+\n?)*)/);
+    if (!dirsMatch) return [];
+    const dirs = dirsMatch[1].match(/^\s+-\s+(.+)$/gm)?.map((l) => l.replace(/^\s+-\s+/, "").trim()) ?? [];
+
+    const skills: Array<{ name: string; path: string }> = [];
+    for (const dir of dirs) {
+      const resolved = dir.startsWith("~") ? path.join(process.env.HOME ?? "", dir.slice(1)) : dir;
+      if (!fs.existsSync(resolved)) continue;
+      const files = fs.readdirSync(resolved).filter((f) => f.endsWith(".md"));
+      for (const file of files) {
+        try {
+          const filePath = path.join(resolved, file);
+          const content = fs.readFileSync(filePath, "utf-8");
+          const nameMatch = content.match(/^name:\s*(.+)$/m);
+          if (nameMatch) skills.push({ name: nameMatch[1].trim(), path: filePath });
+        } catch { /* skip */ }
+      }
+    }
+    return skills;
+  } catch { return []; }
+}
+
+/** Delete a session directory recursively */
+function deleteSession(dir: string, id: string): void {
+  const sessionDir = path.join(dir, id);
+  if (!fs.existsSync(sessionDir)) throw new Error("Session not found");
+  // Safety: check it looks like a session dir
+  if (!fs.existsSync(path.join(sessionDir, "state.json"))) throw new Error("Not a valid session directory");
+  fs.rmSync(sessionDir, { recursive: true, force: true });
+}
+
+/** Track spawned child processes for cleanup */
+const childProcesses = new Map<string, ChildProcess>();
 
 // ---------------------------------------------------------------------------
 // MIME types
@@ -199,7 +265,7 @@ export function startAuditServer(sessionsDir: string, port = 3900) {
 
       // ---- API routes ----
 
-      if (p === "/api/sessions") {
+      if (p === "/api/sessions" && req.method === "GET") {
         try {
           const entries = fs.readdirSync(absSessionsDir, { withFileTypes: true });
           const sessions: Array<Record<string, unknown>> = [];
@@ -223,9 +289,35 @@ export function startAuditServer(sessionsDir: string, port = 3900) {
         }
       }
 
+      // ---- Config & skills listing ----
+
+      if (p === "/api/configs") {
+        return Response.json(listConfigs());
+      }
+
+      if (p === "/api/skills") {
+        const configParam = url.searchParams.get("config") ?? "config.yaml";
+        return Response.json(listSkills(configParam));
+      }
+
+      // ---- Session detail (GET) and delete (DELETE) ----
+
       const sessionMatch = p.match(/^\/api\/sessions\/([a-f0-9-]{36})$/);
       if (sessionMatch) {
         const id = sessionMatch[1];
+
+        if (req.method === "DELETE") {
+          try {
+            const pid = getSessionPid(absSessionsDir, id);
+            if (pid) return Response.json({ error: "Cannot delete a running session. Stop it first." }, { status: 409 });
+            deleteSession(absSessionsDir, id);
+            return Response.json({ ok: true });
+          } catch (err) {
+            return Response.json({ error: String(err) }, { status: 400 });
+          }
+        }
+
+        // GET
         try {
           const state = sanitizeState(readState(absSessionsDir, id));
           const transcript = readTranscript(absSessionsDir, id);
@@ -233,6 +325,82 @@ export function startAuditServer(sessionsDir: string, port = 3900) {
           return Response.json({ state, transcript, systemPrompt });
         } catch (err) {
           return Response.json({ error: String(err) }, { status: 404 });
+        }
+      }
+
+      // POST /api/sessions/:id/stop
+      const stopMatch = p.match(/^\/api\/sessions\/([a-f0-9-]{36})\/stop$/);
+      if (req.method === "POST" && stopMatch) {
+        const id = stopMatch[1];
+        const pid = getSessionPid(absSessionsDir, id);
+        if (!pid) return Response.json({ error: "Session is not running (no active process)" }, { status: 404 });
+        try {
+          process.kill(pid, "SIGTERM");
+          return Response.json({ ok: true, pid });
+        } catch (err) {
+          return Response.json({ error: String(err) }, { status: 500 });
+        }
+      }
+
+      // POST /api/sessions/:id/resume
+      const resumeMatch = p.match(/^\/api\/sessions\/([a-f0-9-]{36})\/resume$/);
+      if (req.method === "POST" && resumeMatch) {
+        const id = resumeMatch[1];
+        try {
+          const body = await req.json() as { config: string };
+          const configFile = body.config ?? "config.yaml";
+          const child = spawn("bun", ["run", "src/cli.ts", "resume", id, "--config", configFile], {
+            stdio: "ignore",
+            detached: true,
+          });
+          child.unref();
+          childProcesses.set(id, child);
+          child.on("exit", () => childProcesses.delete(id));
+          return Response.json({ ok: true, pid: child.pid });
+        } catch (err) {
+          return Response.json({ error: String(err) }, { status: 500 });
+        }
+      }
+
+      // POST /api/sessions — start a new session
+      if (req.method === "POST" && p === "/api/sessions") {
+        try {
+          const body = await req.json() as { skill: string; config: string; task: string };
+          if (!body.skill || !body.task) {
+            return Response.json({ error: "skill and task are required" }, { status: 400 });
+          }
+          const configFile = body.config ?? "config.yaml";
+          const child = spawn("bun", [
+            "run", "src/cli.ts", "run", body.skill,
+            "--config", configFile,
+            "--task", body.task,
+          ], {
+            stdio: ["ignore", "pipe", "pipe"],
+            detached: true,
+          });
+          child.stdout?.on("data", (d: Buffer) => process.stdout.write(`[run ${body.skill}] ${d}`));
+          child.stderr?.on("data", (d: Buffer) => process.stderr.write(`[run ${body.skill}] ${d}`));
+          child.unref();
+          // Wait briefly for the session to be created so we can return its ID
+          await new Promise((r) => setTimeout(r, 1500));
+          // Find the newest session
+          try {
+            const entries = fs.readdirSync(absSessionsDir, { withFileTypes: true });
+            let newest: { id: string; time: number } | null = null;
+            for (const e of entries) {
+              if (!e.isDirectory()) continue;
+              try {
+                const st = readState(absSessionsDir, e.name);
+                const t = new Date(st.startedAt).getTime();
+                if (!newest || t > newest.time) newest = { id: e.name, time: t };
+              } catch { /* skip */ }
+            }
+            return Response.json({ ok: true, pid: child.pid, sessionId: newest?.id });
+          } catch {
+            return Response.json({ ok: true, pid: child.pid });
+          }
+        } catch (err) {
+          return Response.json({ error: String(err) }, { status: 500 });
         }
       }
 

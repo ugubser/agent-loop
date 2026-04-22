@@ -4,6 +4,7 @@
 
 let allSessions = [];
 let activeSessionId = null;
+let activeSessionState = null;
 let activeEventSource = null;
 let sessionListRefreshTimer = null;
 
@@ -11,6 +12,7 @@ let sessionListRefreshTimer = null;
 document.addEventListener("DOMContentLoaded", () => {
   loadSessions();
   document.getElementById("search").addEventListener("input", renderSessionList);
+  document.getElementById("new-session-btn").addEventListener("click", showNewSessionDialog);
   // Refresh session list every 5s to pick up new/changed sessions
   sessionListRefreshTimer = setInterval(loadSessions, 5000);
 });
@@ -68,6 +70,7 @@ async function loadSession(id) {
 
   const res = await fetch(`/api/sessions/${id}`);
   const { state, transcript, systemPrompt } = await res.json();
+  activeSessionState = state;
 
   document.getElementById("empty-state").hidden = true;
   const detail = document.getElementById("session-detail");
@@ -144,6 +147,11 @@ function renderHeader(state, systemPrompt) {
       <summary>System Prompt / Skill Instructions (${formatChars(systemPrompt.length)})</summary>
       <div class="system-prompt-body">${esc(systemPrompt)}</div>
     </details>` : ""}
+    <div class="action-bar">
+      ${state.status === "running" ? `<button class="btn btn-warning btn-sm" onclick="stopSession('${state.id}')">Stop</button>` : ""}
+      ${state.status === "paused" || state.status === "crashed" ? `<button class="btn btn-primary btn-sm" onclick="resumeSession('${state.id}')">Resume</button>` : ""}
+      ${state.status !== "running" ? `<button class="btn btn-danger btn-sm" onclick="deleteSession('${state.id}')">Delete</button>` : ""}
+    </div>
   `;
 }
 
@@ -585,4 +593,152 @@ function formatChars(n) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M chars`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K chars`;
   return `${n} chars`;
+}
+
+// ---------------------------------------------------------------------------
+// Session actions
+// ---------------------------------------------------------------------------
+
+async function stopSession(id) {
+  if (!confirm("Stop this running session?")) return;
+  const res = await fetch(`/api/sessions/${id}/stop`, { method: "POST" });
+  const data = await res.json();
+  if (data.error) { alert(`Error: ${data.error}`); return; }
+  // Refresh after a brief delay for state to update
+  setTimeout(() => loadSession(id), 1000);
+}
+
+async function resumeSession(id) {
+  // Pick config — use the session's own config if we can detect it, otherwise ask
+  const configs = await (await fetch("/api/configs")).json();
+  const configFile = await pickConfig(configs);
+  if (!configFile) return;
+
+  const res = await fetch(`/api/sessions/${id}/resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ config: configFile }),
+  });
+  const data = await res.json();
+  if (data.error) { alert(`Error: ${data.error}`); return; }
+  setTimeout(() => loadSession(id), 1500);
+}
+
+async function deleteSession(id) {
+  if (!confirm(`Delete session ${id}? This cannot be undone.`)) return;
+  const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+  const data = await res.json();
+  if (data.error) { alert(`Error: ${data.error}`); return; }
+  activeSessionId = null;
+  document.getElementById("session-detail").hidden = true;
+  document.getElementById("empty-state").hidden = false;
+  loadSessions();
+}
+
+// ---------------------------------------------------------------------------
+// New session dialog
+// ---------------------------------------------------------------------------
+
+async function showNewSessionDialog() {
+  const configs = await (await fetch("/api/configs")).json();
+  // Load skills from first config
+  const defaultConfig = configs[0] ?? "config.yaml";
+  let skills = await (await fetch(`/api/skills?config=${encodeURIComponent(defaultConfig)}`)).json();
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2>New Session</h2>
+      <label for="ns-config">Config</label>
+      <select id="ns-config">
+        ${configs.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}
+      </select>
+
+      <label for="ns-skill">Skill</label>
+      <select id="ns-skill">
+        ${skills.map((s) => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")}
+      </select>
+
+      <label for="ns-task">Task</label>
+      <textarea id="ns-task" placeholder="Describe the task..."></textarea>
+
+      <div class="modal-actions">
+        <button class="btn btn-default" id="ns-cancel">Cancel</button>
+        <button class="btn btn-primary" id="ns-run">Run</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Update skills when config changes
+  overlay.querySelector("#ns-config").addEventListener("change", async (e) => {
+    const cfg = e.target.value;
+    skills = await (await fetch(`/api/skills?config=${encodeURIComponent(cfg)}`)).json();
+    const sel = overlay.querySelector("#ns-skill");
+    sel.innerHTML = skills.map((s) => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("");
+  });
+
+  overlay.querySelector("#ns-cancel").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelector("#ns-run").addEventListener("click", async () => {
+    const config = overlay.querySelector("#ns-config").value;
+    const skill = overlay.querySelector("#ns-skill").value;
+    const task = overlay.querySelector("#ns-task").value.trim();
+    if (!task) { alert("Task is required"); return; }
+
+    overlay.querySelector("#ns-run").disabled = true;
+    overlay.querySelector("#ns-run").textContent = "Starting...";
+
+    const res = await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skill, config, task }),
+    });
+    const data = await res.json();
+    overlay.remove();
+
+    if (data.error) { alert(`Error: ${data.error}`); return; }
+    await loadSessions();
+    if (data.sessionId) loadSession(data.sessionId);
+  });
+
+  // Focus the task input
+  setTimeout(() => overlay.querySelector("#ns-task").focus(), 100);
+}
+
+// ---------------------------------------------------------------------------
+// Config picker (for resume)
+// ---------------------------------------------------------------------------
+
+function pickConfig(configs) {
+  return new Promise((resolve) => {
+    if (configs.length === 1) { resolve(configs[0]); return; }
+
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal">
+        <h2>Select Config</h2>
+        <label for="pc-config">Config file to use for resume</label>
+        <select id="pc-config">
+          ${configs.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}
+        </select>
+        <div class="modal-actions">
+          <button class="btn btn-default" id="pc-cancel">Cancel</button>
+          <button class="btn btn-primary" id="pc-ok">Resume</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector("#pc-cancel").addEventListener("click", () => { overlay.remove(); resolve(null); });
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) { overlay.remove(); resolve(null); } });
+    overlay.querySelector("#pc-ok").addEventListener("click", () => {
+      const val = overlay.querySelector("#pc-config").value;
+      overlay.remove();
+      resolve(val);
+    });
+  });
 }
