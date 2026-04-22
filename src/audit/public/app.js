@@ -4,11 +4,15 @@
 
 let allSessions = [];
 let activeSessionId = null;
+let activeEventSource = null;
+let sessionListRefreshTimer = null;
 
 // --- Boot ---
 document.addEventListener("DOMContentLoaded", () => {
   loadSessions();
   document.getElementById("search").addEventListener("input", renderSessionList);
+  // Refresh session list every 5s to pick up new/changed sessions
+  sessionListRefreshTimer = setInterval(loadSessions, 5000);
 });
 
 // --- Session list ---
@@ -53,6 +57,12 @@ function renderSessionList() {
 // --- Session detail ---
 
 async function loadSession(id) {
+  // Close previous SSE stream
+  if (activeEventSource) {
+    activeEventSource.close();
+    activeEventSource = null;
+  }
+
   activeSessionId = id;
   renderSessionList(); // update active highlight
 
@@ -68,6 +78,46 @@ async function loadSession(id) {
 
   // Scroll main panel to top
   document.getElementById("main-panel").scrollTop = 0;
+
+  // Connect SSE for live updates
+  connectSSE(id, state);
+}
+
+function connectSSE(id, initialState) {
+  const es = new EventSource(`/api/sessions/${id}/stream`);
+  activeEventSource = es;
+
+  es.addEventListener("transcript", (event) => {
+    // Append new timeline entry
+    try {
+      const entry = JSON.parse(event.data);
+      const timeline = document.getElementById("timeline");
+      const el = buildTimelineEntry(entry);
+      timeline.appendChild(el);
+
+      // Auto-scroll if user is near the bottom
+      const main = document.getElementById("main-panel");
+      const nearBottom = main.scrollHeight - main.scrollTop - main.clientHeight < 200;
+      if (nearBottom) {
+        el.scrollIntoView({ behavior: "smooth", block: "end" });
+      }
+    } catch { /* ignore parse errors */ }
+  });
+
+  es.addEventListener("state", (event) => {
+    // Update header with new state
+    try {
+      const state = JSON.parse(event.data);
+      // Preserve systemPrompt from initial load
+      const sp = document.querySelector(".system-prompt-body");
+      const systemPrompt = sp ? sp.textContent : "";
+      renderHeader(state, systemPrompt);
+    } catch { /* ignore */ }
+  });
+
+  es.onerror = () => {
+    // Reconnect handled automatically by EventSource
+  };
 }
 
 function renderHeader(state, systemPrompt) {

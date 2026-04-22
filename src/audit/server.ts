@@ -88,6 +88,28 @@ const MIME: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// SSE — live streaming of session updates
+// ---------------------------------------------------------------------------
+
+/** Track file size to detect appended lines */
+function getFileSize(filePath: string): number {
+  try { return fs.statSync(filePath).size; } catch { return 0; }
+}
+
+/** Read new lines appended since `offset` bytes. Returns new lines + new offset. */
+function readNewLines(filePath: string, offset: number): { lines: string[]; newOffset: number } {
+  const size = getFileSize(filePath);
+  if (size <= offset) return { lines: [], newOffset: offset };
+  const fd = fs.openSync(filePath, "r");
+  const buf = Buffer.alloc(size - offset);
+  fs.readSync(fd, buf, 0, buf.length, offset);
+  fs.closeSync(fd);
+  const chunk = buf.toString("utf-8");
+  const lines = chunk.split("\n").filter((l) => l.trim().length > 0);
+  return { lines, newOffset: size };
+}
+
+// ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
 
@@ -107,6 +129,73 @@ export function startAuditServer(sessionsDir: string, port = 3900) {
     async fetch(req: Request) {
       const url = new URL(req.url);
       const p = url.pathname;
+
+      // ---- SSE stream for a session ----
+
+      const streamMatch = p.match(/^\/api\/sessions\/([a-f0-9-]{36})\/stream$/);
+      if (streamMatch) {
+        const id = streamMatch[1];
+        const transcriptFile = path.join(absSessionsDir, id, "transcript.jsonl");
+        const stateFile = path.join(absSessionsDir, id, "state.json");
+
+        if (!fs.existsSync(transcriptFile)) {
+          return Response.json({ error: "Session not found" }, { status: 404 });
+        }
+
+        let transcriptOffset = getFileSize(transcriptFile);
+        let lastStateMtime = getFileSize(stateFile); // use size as cheap change detector
+        let closed = false;
+
+        const stream = new ReadableStream({
+          start(controller) {
+            // Send initial keepalive
+            controller.enqueue(": connected\n\n");
+
+            const interval = setInterval(() => {
+              if (closed) { clearInterval(interval); return; }
+              try {
+                // Check for new transcript lines
+                const { lines, newOffset } = readNewLines(transcriptFile, transcriptOffset);
+                if (lines.length > 0) {
+                  transcriptOffset = newOffset;
+                  for (const line of lines) {
+                    controller.enqueue(`event: transcript\ndata: ${line}\n\n`);
+                  }
+                }
+
+                // Check for state changes
+                const currentStateMtime = getFileSize(stateFile);
+                if (currentStateMtime !== lastStateMtime) {
+                  lastStateMtime = currentStateMtime;
+                  try {
+                    const state = sanitizeState(readState(absSessionsDir, id));
+                    controller.enqueue(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
+                  } catch { /* ignore read errors */ }
+                }
+              } catch {
+                // File might be gone
+                clearInterval(interval);
+                try { controller.close(); } catch { /* already closed */ }
+              }
+            }, 500); // poll every 500ms
+
+            // Cleanup when client disconnects
+            req.signal.addEventListener("abort", () => {
+              closed = true;
+              clearInterval(interval);
+            });
+          },
+          cancel() { closed = true; },
+        });
+
+        return new Response(stream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+          },
+        });
+      }
 
       // ---- API routes ----
 
