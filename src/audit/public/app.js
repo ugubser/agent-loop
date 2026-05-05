@@ -13,6 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
   loadSessions();
   document.getElementById("search").addEventListener("input", renderSessionList);
   document.getElementById("new-session-btn").addEventListener("click", showNewSessionDialog);
+  setupTimelineSearch();
   // Refresh session list every 5s to pick up new/changed sessions
   sessionListRefreshTimer = setInterval(loadSessions, 5000);
 });
@@ -76,6 +77,9 @@ async function loadSession(id) {
   const detail = document.getElementById("session-detail");
   detail.hidden = false;
 
+  // Reset search when switching sessions
+  resetTimelineSearch();
+
   renderHeader(state, systemPrompt);
   renderTimeline(state, transcript);
 
@@ -104,6 +108,10 @@ function connectSSE(id, initialState) {
       if (nearBottom) {
         el.scrollIntoView({ behavior: "smooth", block: "end" });
       }
+
+      // Re-run search to pick up matches in the new entry
+      const q = document.getElementById("timeline-search-input")?.value;
+      if (q) doTimelineSearch(q);
     } catch { /* ignore parse errors */ }
   });
 
@@ -706,6 +714,189 @@ async function showNewSessionDialog() {
 
   // Focus the task input
   setTimeout(() => overlay.querySelector("#ns-task").focus(), 100);
+}
+
+// ---------------------------------------------------------------------------
+// Timeline search
+// ---------------------------------------------------------------------------
+
+let searchMatches = [];
+let searchActiveIdx = -1;
+let searchDebounceTimer = null;
+
+function setupTimelineSearch() {
+  const input = document.getElementById("timeline-search-input");
+  if (!input) return;
+  input.addEventListener("input", () => {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => doTimelineSearch(input.value), 200);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (e.shiftKey) prevSearchMatch();
+      else nextSearchMatch();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      input.value = "";
+      doTimelineSearch("");
+      input.blur();
+    }
+  });
+  document.getElementById("timeline-search-prev").addEventListener("click", prevSearchMatch);
+  document.getElementById("timeline-search-next").addEventListener("click", nextSearchMatch);
+  document.getElementById("timeline-search-clear").addEventListener("click", () => {
+    input.value = "";
+    doTimelineSearch("");
+    input.focus();
+  });
+
+  // Cmd/Ctrl+F to focus search when a session is open
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+      const detail = document.getElementById("session-detail");
+      if (detail && !detail.hidden) {
+        e.preventDefault();
+        input.focus();
+        input.select();
+      }
+    }
+  });
+}
+
+function resetTimelineSearch() {
+  const input = document.getElementById("timeline-search-input");
+  if (input) input.value = "";
+  searchMatches = [];
+  searchActiveIdx = -1;
+  updateSearchCount();
+}
+
+function doTimelineSearch(query) {
+  clearSearchHighlights();
+  searchMatches = [];
+  searchActiveIdx = -1;
+
+  const q = (query ?? "").trim();
+  if (!q) {
+    updateSearchCount();
+    return;
+  }
+
+  // Force-render lazy bodies and expand all collapses so search can reach into them
+  forceRenderAllBodies();
+
+  const timeline = document.getElementById("timeline");
+  highlightMatchesIn(timeline, q);
+
+  searchMatches = Array.from(timeline.querySelectorAll("mark.search-hit"));
+
+  // Open every <details> ancestor of every match so hits are visible
+  for (const m of searchMatches) {
+    let p = m.parentElement;
+    while (p && p !== timeline) {
+      if (p.tagName === "DETAILS" && !p.open) p.open = true;
+      p = p.parentElement;
+    }
+  }
+
+  if (searchMatches.length > 0) setActiveSearchMatch(0);
+  updateSearchCount();
+}
+
+function forceRenderAllBodies() {
+  // Open top-level entries first (their toggle handler renders the body)
+  const entries = document.querySelectorAll("#timeline > details.tl-entry");
+  for (const e of entries) {
+    if (!e.open) e.open = true;
+  }
+  // Then expand any nested collapsibles inside the now-rendered bodies
+  const collapses = document.querySelectorAll("#timeline details.tl-collapse");
+  for (const c of collapses) {
+    if (!c.open) c.open = true;
+  }
+}
+
+function highlightMatchesIn(root, query) {
+  const re = new RegExp(escapeRegex(query), "gi");
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+      let p = node.parentElement;
+      while (p) {
+        const tag = p.tagName;
+        if (tag === "MARK" || tag === "SCRIPT" || tag === "STYLE") return NodeFilter.FILTER_REJECT;
+        p = p.parentElement;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets = [];
+  while (walker.nextNode()) targets.push(walker.currentNode);
+
+  for (const node of targets) {
+    const text = node.nodeValue;
+    re.lastIndex = 0;
+    if (!re.test(text)) continue;
+    re.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const mark = document.createElement("mark");
+      mark.className = "search-hit";
+      mark.textContent = m[0];
+      frag.appendChild(mark);
+      last = m.index + m[0].length;
+      if (m[0].length === 0) re.lastIndex++;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+function clearSearchHighlights() {
+  const timeline = document.getElementById("timeline");
+  if (!timeline) return;
+  const marks = timeline.querySelectorAll("mark.search-hit");
+  for (const m of marks) {
+    const text = document.createTextNode(m.textContent);
+    m.parentNode.replaceChild(text, m);
+  }
+  timeline.normalize();
+}
+
+function nextSearchMatch() {
+  if (searchMatches.length === 0) return;
+  setActiveSearchMatch((searchActiveIdx + 1) % searchMatches.length);
+}
+
+function prevSearchMatch() {
+  if (searchMatches.length === 0) return;
+  const i = searchActiveIdx <= 0 ? searchMatches.length - 1 : searchActiveIdx - 1;
+  setActiveSearchMatch(i);
+}
+
+function setActiveSearchMatch(i) {
+  for (const m of searchMatches) m.classList.remove("search-hit-active");
+  searchActiveIdx = i;
+  const target = searchMatches[i];
+  if (!target) return;
+  target.classList.add("search-hit-active");
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  updateSearchCount();
+}
+
+function updateSearchCount() {
+  const el = document.getElementById("timeline-search-count");
+  if (!el) return;
+  if (searchMatches.length === 0) el.textContent = "0 / 0";
+  else el.textContent = `${searchActiveIdx + 1} / ${searchMatches.length}`;
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,13 @@
         <p>Select a session to inspect</p>
       </div>
       <div id="session-detail" hidden>
+        <div class="timeline-search">
+          <input id="timeline-search-input" type="text" placeholder="Search timeline (Enter = next, Shift+Enter = prev, Esc = clear)">
+          <span id="timeline-search-count" class="timeline-search-count">0 / 0</span>
+          <button id="timeline-search-prev" class="btn btn-default btn-sm" type="button" title="Previous match (Shift+Enter)">&#9650;</button>
+          <button id="timeline-search-next" class="btn btn-default btn-sm" type="button" title="Next match (Enter)">&#9660;</button>
+          <button id="timeline-search-clear" class="btn btn-default btn-sm" type="button">Clear</button>
+        </div>
         <header id="session-header"></header>
         <div id="timeline"></div>
       </div>

@@ -249,6 +249,53 @@ body {
   margin-top: 20px;
 }
 
+/* --- Timeline search --- */
+.timeline-search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 12px;
+  position: sticky;
+  top: -24px;
+  z-index: 10;
+}
+.timeline-search input {
+  flex: 1;
+  padding: 5px 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #c9d1d9;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.timeline-search input:focus { border-color: #58a6ff; }
+.timeline-search-count {
+  font-size: 11px;
+  color: #8b949e;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  min-width: 56px;
+  text-align: center;
+}
+
+/* Search hit highlighting */
+mark.search-hit {
+  background: #ffd33d;
+  color: #0d1117;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+mark.search-hit-active {
+  background: #f0883e;
+  color: #fff;
+  box-shadow: 0 0 0 2px #f0883e;
+}
+
 /* --- Timeline --- */
 #timeline {
   display: flex;
