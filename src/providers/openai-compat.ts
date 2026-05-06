@@ -28,6 +28,7 @@ export class OpenAICompatProvider {
     system: string;
     messages: Message[];
     tools?: ToolSchema[];
+    temperature?: number;
   }): Promise<ProviderResponse> {
     // Convert our message format to OpenAI format
     const openaiMessages = [
@@ -52,6 +53,9 @@ export class OpenAICompatProvider {
     };
     if (openaiTools?.length) {
       body.tools = openaiTools;
+    }
+    if (params.temperature !== undefined) {
+      body.temperature = params.temperature;
     }
 
     const requestStart = Date.now();

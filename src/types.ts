@@ -30,6 +30,7 @@ export interface AgentConfig {
     authToken?: string; // For anthropic: OAuth Bearer token (alternative to apiKey)
     requestTimeout?: number; // Milliseconds before aborting an LLM request (default: 300000)
     providerRetries?: number; // Number of retries on provider error (default: 3)
+    temperature?: number; // Sampling temperature; only sent to the provider when set
   };
   session: {
     maxContext: number;

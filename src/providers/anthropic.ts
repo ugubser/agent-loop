@@ -24,6 +24,7 @@ export class AnthropicProvider {
     system: string;
     messages: Message[];
     tools?: ToolSchema[];
+    temperature?: number;
   }): Promise<ProviderResponse> {
     const apiTools = params.tools?.map((t) => ({
       name: t.name,
@@ -37,6 +38,7 @@ export class AnthropicProvider {
       system: params.system,
       messages: params.messages as Anthropic.MessageParam[],
       ...(apiTools?.length ? { tools: apiTools } : {}),
+      ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
     });
 
     const content: ContentBlock[] = response.content.map((block) => {

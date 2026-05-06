@@ -121,6 +121,7 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         system: session.systemPrompt,
         messages: session.messages,
         tools: allTools.length > 0 ? allTools : undefined,
+        ...(config.model.temperature !== undefined ? { temperature: config.model.temperature } : {}),
       };
 
       // Log the full LLM request
