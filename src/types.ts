@@ -12,6 +12,12 @@ export interface SessionState {
   lastCheckpoint?: string; // "checkpoint-005.json"
   tokenUsage: TokenUsage;
   config: AgentConfig;
+  // Sub-process linkage — set when this session was dispatched by a tool
+  // call from another agent-loop session. The orchestrator's LLM never
+  // sees parent_id; it addresses this session by process_name only.
+  parent_id?: string;
+  process_name?: string;
+  config_path?: string; // Path of the config YAML this session was started with — needed for resume_process
 }
 
 export interface TokenUsage {
@@ -107,6 +113,12 @@ export interface CliToolDef {
   };
 }
 
+// Built-in tool reference — declared in skill YAML's `builtins:` array.
+// Schema and implementation live in src/tools/builtin.ts.
+export interface BuiltinToolDef {
+  name: string;
+}
+
 // Tool schema for Anthropic API
 export interface ToolSchema {
   name: string;
@@ -130,6 +142,7 @@ export interface SkillDef {
   description: string;
   instructions: string; // markdown body
   tools: CliToolDef[];
+  builtins: BuiltinToolDef[];
 }
 
 // Checkpoint shape

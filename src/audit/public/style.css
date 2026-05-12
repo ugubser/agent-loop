@@ -119,6 +119,33 @@ body {
   text-overflow: ellipsis;
 }
 
+/* --- Sidebar parent-child hierarchy --- */
+.session-child {
+  border-left: 3px solid #d2a8ff;
+  padding-left: 8px !important;
+  background: #15131f;
+}
+.session-expand {
+  display: inline-block;
+  font-size: 9px;
+  color: #8b949e;
+  cursor: pointer;
+  user-select: none;
+  width: 12px;
+  margin-right: 2px;
+}
+.session-expand:hover { color: #f0f6fc; }
+.session-process-name {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: #d2a8ff;
+}
+.session-process-name code { background: transparent; padding: 0; }
+#session-flat-toggle {
+  width: 100%;
+  margin-top: 6px;
+}
+
 /* --- Status badges --- */
 .badge {
   display: inline-block;
@@ -188,6 +215,73 @@ body {
   height: 100%;
   background: linear-gradient(90deg, #58a6ff, #3fb950);
   border-radius: 3px;
+}
+
+/* --- Parent & sub-process relations in detail header --- */
+.header-relation {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #8b949e;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.header-relation .label { color: #484f58; }
+.relation-link {
+  color: #58a6ff;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.relation-link:hover { text-decoration: underline; }
+.relation-id {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #8b949e;
+}
+.relation-skill {
+  color: #c9d1d9;
+  font-weight: 500;
+}
+.relation-process {
+  font-size: 11px;
+  color: #8b949e;
+}
+.relation-process code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  background: #21262d;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #d2a8ff;
+}
+.header-subprocesses {
+  margin-top: 10px;
+}
+.header-subprocesses .label {
+  font-size: 11px;
+  color: #484f58;
+  margin-bottom: 6px;
+}
+.subprocess-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.subprocess-list li {
+  padding: 4px 0;
+}
+.subprocess-list code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  background: #21262d;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: #d2a8ff;
+  font-size: 11px;
 }
 
 /* --- Session action bar --- */

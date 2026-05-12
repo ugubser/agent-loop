@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import matter from "gray-matter";
-import type { SkillDef, SkillSummary, CliToolDef } from "../types.js";
+import type { SkillDef, SkillSummary, CliToolDef, BuiltinToolDef } from "../types.js";
 
 export async function loadSkill(skillPath: string): Promise<SkillDef> {
   const raw = fs.readFileSync(skillPath, "utf-8");
@@ -38,11 +38,23 @@ export async function loadSkill(skillPath: string): Promise<SkillDef> {
     }
   }
 
+  const builtins: BuiltinToolDef[] = [];
+  if (Array.isArray(data.builtins)) {
+    for (const b of data.builtins) {
+      if (typeof b === "string") {
+        builtins.push({ name: b });
+      } else if (b && typeof b === "object" && typeof (b as { name?: unknown }).name === "string") {
+        builtins.push({ name: (b as { name: string }).name });
+      }
+    }
+  }
+
   return {
     name: data.name,
     description: data.description ?? "",
     instructions: content.trim(),
     tools,
+    builtins,
   };
 }
 

@@ -205,6 +205,25 @@ export class FileStore {
       return [];
     }
   }
+
+  // --- Sub-process lookup (sessions dispatched by another session) ---
+
+  async listSubProcesses(parentId: string): Promise<SessionState[]> {
+    const all = await this.listSessions();
+    return all.filter((s) => s.parent_id === parentId);
+  }
+
+  async findSubProcessByName(
+    parentId: string,
+    processName: string
+  ): Promise<SessionState | null> {
+    const candidates = (await this.listSubProcesses(parentId)).filter(
+      (s) => s.process_name === processName
+    );
+    if (candidates.length === 0) return null;
+    // listSessions is already sorted by updatedAt desc; return the most recent
+    return candidates[0];
+  }
 }
 
 function isProcessAlive(pid: number): boolean {

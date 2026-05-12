@@ -2,10 +2,15 @@ import { execFile } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import type { CliToolDef, ToolSchema } from "../types.js";
+import type { FileStore } from "../persistence/file-store.js";
+import { BUILTIN_HANDLERS, builtinSchemas } from "./builtin.js";
 
 export class CliToolExecutor {
   private tools: Map<string, CliToolDef> = new Map();
+  private builtinNames: Set<string> = new Set();
   private resolvedCommands: Map<string, string> = new Map(); // name → absolute path
+  private currentSessionId: string | undefined;
+  private store: FileStore | undefined;
 
   constructor(
     private allowedCommands: string[],
@@ -41,8 +46,16 @@ export class CliToolExecutor {
     this.tools.set(tool.name, tool);
   }
 
+  registerBuiltin(name: string): void {
+    if (!BUILTIN_HANDLERS[name]) {
+      throw new Error(`Unknown built-in tool "${name}". Known: ${Object.keys(BUILTIN_HANDLERS).join(", ")}`);
+    }
+    this.builtinNames.add(name);
+  }
+
   clearTools(): void {
     this.tools.clear();
+    this.builtinNames.clear();
   }
 
   registerAll(tools: CliToolDef[]): void {
@@ -51,8 +64,16 @@ export class CliToolExecutor {
     }
   }
 
+  /** Attach the current session ID and store so the executor can propagate
+   *  AGENT_LOOP_PARENT_SESSION / AGENT_LOOP_PROCESS_NAME to spawned CLI
+   *  tools and run built-in handlers. Call once per session lifetime. */
+  setSessionContext(sessionId: string, store: FileStore): void {
+    this.currentSessionId = sessionId;
+    this.store = store;
+  }
+
   schemas(): ToolSchema[] {
-    return Array.from(this.tools.values()).map((tool) => {
+    const cliSchemas = Array.from(this.tools.values()).map((tool) => {
       const properties: Record<string, unknown> = {};
       const required: string[] = [];
 
@@ -74,18 +95,27 @@ export class CliToolExecutor {
         },
       };
     });
+    const bs = builtinSchemas(this.builtinNames);
+    return [...cliSchemas, ...bs];
   }
 
   resolve(name: string): CliToolDef | undefined {
     return this.tools.get(name);
   }
 
-  /** Return names of all tools with context.preserveResult=true */
+  isBuiltin(name: string): boolean {
+    return this.builtinNames.has(name);
+  }
+
+  /** Return names of all tools with context.preserveResult=true. Built-in
+   *  tools are also treated as preserved (their summaries are infrastructure
+   *  signals, not subject to context trimming). */
   preservedToolNames(): Set<string> {
     const result = new Set<string>();
     for (const [name, tool] of this.tools) {
       if (tool.context?.preserveResult) result.add(name);
     }
+    for (const name of this.builtinNames) result.add(name);
     return result;
   }
 
@@ -93,6 +123,19 @@ export class CliToolExecutor {
     name: string,
     input: Record<string, unknown>
   ): Promise<string> {
+    // Built-in dispatch
+    if (this.builtinNames.has(name)) {
+      const handler = BUILTIN_HANDLERS[name];
+      if (!handler) throw new Error(`Built-in tool "${name}" missing handler`);
+      if (!this.currentSessionId || !this.store) {
+        throw new Error(`Built-in tool "${name}" requires session context; setSessionContext was not called`);
+      }
+      return handler.execute(input, {
+        parentSessionId: this.currentSessionId,
+        store: this.store,
+      });
+    }
+
     const tool = this.tools.get(name);
     if (!tool) {
       throw new Error(`Unknown tool: ${name}`);
@@ -123,10 +166,14 @@ export class CliToolExecutor {
     // Determine if we need to pipe stdin
     const stdinData = tool.stdinParam ? String(input[tool.stdinParam] ?? "") : null;
 
-    // Merge tool-specific env vars with process env
-    const env = tool.env
-      ? { ...process.env, ...tool.env }
-      : undefined;
+    // Build env: parent linkage vars + tool-specific vars + process env.
+    // The child process — which may itself be `bun src/cli.ts run …` —
+    // picks up AGENT_LOOP_PARENT_SESSION / AGENT_LOOP_PROCESS_NAME and
+    // links its session back to the current one.
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (this.currentSessionId) env.AGENT_LOOP_PARENT_SESSION = this.currentSessionId;
+    env.AGENT_LOOP_PROCESS_NAME = name;
+    if (tool.env) Object.assign(env, tool.env);
 
     return new Promise((resolve, reject) => {
       const child = execFile(

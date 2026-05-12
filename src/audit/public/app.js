@@ -26,6 +26,13 @@ async function loadSessions() {
   renderSessionList();
 }
 
+let showAllSessionsFlat = false;
+// IDs of parent sessions whose sub-process list is currently expanded.
+// Persisted across renders so the 5-second sidebar refresh doesn't collapse
+// what the user just opened. Auto-expands when the active session is a
+// sub-process of one of these parents.
+const expandedParents = new Set();
+
 function renderSessionList() {
   const filter = document.getElementById("search").value.toLowerCase();
   const list = document.getElementById("session-list");
@@ -36,13 +43,37 @@ function renderSessionList() {
     return hay.includes(filter);
   });
 
+  // Compute parent-child relationships in-memory
+  const childrenByParent = new Map();
   for (const s of filtered) {
+    if (s.parent_id) {
+      if (!childrenByParent.has(s.parent_id)) childrenByParent.set(s.parent_id, []);
+      childrenByParent.get(s.parent_id).push(s);
+    }
+  }
+
+  // If the active session is a child, force-expand its parent so the
+  // active highlight stays visible after the next refresh.
+  if (activeSessionId) {
+    const active = allSessions.find((s) => s.id === activeSessionId);
+    if (active?.parent_id) expandedParents.add(active.parent_id);
+  }
+
+  const renderItem = (s, isChild = false) => {
+    const subs = childrenByParent.get(s.id) ?? [];
+    const isExpanded = expandedParents.has(s.id);
     const li = document.createElement("li");
     if (s.id === activeSessionId) li.classList.add("active");
+    if (isChild) li.classList.add("session-child");
+    const expandIcon = subs.length > 0 && !showAllSessionsFlat
+      ? `<span class="session-expand" data-expanded="${isExpanded}">${isExpanded ? "▼" : "▶"}</span>`
+      : "";
     li.innerHTML = `
       <div class="session-item-header">
+        ${expandIcon}
         <span class="session-skill">${esc(s.skillName)}</span>
         <span class="badge badge-${s.status}">${s.status}</span>
+        ${s.process_name ? `<span class="session-process-name" title="dispatched as ${esc(s.process_name)}"><code>${esc(s.process_name)}</code></span>` : ""}
       </div>
       <div class="session-meta">
         <span class="session-id">${s.shortId ?? s.id.slice(0, 8)}</span>
@@ -52,9 +83,47 @@ function renderSessionList() {
       </div>
       <div class="session-task">${esc(s.taskPreview ?? "")}</div>
     `;
-    li.addEventListener("click", () => loadSession(s.id));
-    list.appendChild(li);
+    li.addEventListener("click", (ev) => {
+      // Expand affordance toggles the children inline AND persists the state
+      if (ev.target.classList?.contains("session-expand")) {
+        ev.stopPropagation();
+        if (expandedParents.has(s.id)) {
+          expandedParents.delete(s.id);
+        } else {
+          expandedParents.add(s.id);
+        }
+        renderSessionList();
+        return;
+      }
+      loadSession(s.id);
+    });
+    return li;
+  };
+
+  if (showAllSessionsFlat) {
+    for (const s of filtered) list.appendChild(renderItem(s));
+  } else {
+    const topLevel = filtered.filter((s) => !s.parent_id);
+    for (const s of topLevel) {
+      const li = renderItem(s);
+      list.appendChild(li);
+      const subs = childrenByParent.get(s.id) ?? [];
+      if (expandedParents.has(s.id)) {
+        for (const sub of subs) {
+          const subLi = renderItem(sub, true);
+          subLi.dataset.parentId = s.id;
+          list.appendChild(subLi);
+        }
+      }
+    }
   }
+}
+
+function toggleFlatView() {
+  showAllSessionsFlat = !showAllSessionsFlat;
+  const btn = document.getElementById("session-flat-toggle");
+  if (btn) btn.textContent = showAllSessionsFlat ? "Show hierarchy" : "Show all (flat)";
+  renderSessionList();
 }
 
 // --- Session detail ---
@@ -70,7 +139,7 @@ async function loadSession(id) {
   renderSessionList(); // update active highlight
 
   const res = await fetch(`/api/sessions/${id}`);
-  const { state, transcript, systemPrompt } = await res.json();
+  const { state, transcript, systemPrompt, parent, subprocesses } = await res.json();
   activeSessionState = state;
 
   document.getElementById("empty-state").hidden = true;
@@ -80,7 +149,7 @@ async function loadSession(id) {
   // Reset search when switching sessions
   resetTimelineSearch();
 
-  renderHeader(state, systemPrompt);
+  renderHeader(state, systemPrompt, parent, subprocesses);
   renderTimeline(state, transcript);
 
   // Scroll main panel to top
@@ -116,13 +185,21 @@ function connectSSE(id, initialState) {
   });
 
   es.addEventListener("state", (event) => {
-    // Update header with new state
+    // Update header with new state. Re-fetch parent/subprocesses since they
+    // can change as sub-processes get dispatched mid-session.
     try {
       const state = JSON.parse(event.data);
-      // Preserve systemPrompt from initial load
       const sp = document.querySelector(".system-prompt-body");
       const systemPrompt = sp ? sp.textContent : "";
-      renderHeader(state, systemPrompt);
+      // Async refresh of relation data — fire-and-forget so the immediate
+      // state update isn't blocked.
+      fetch(`/api/sessions/${state.id}`).then((r) => r.json()).then((data) => {
+        if (activeSessionId === state.id) {
+          renderHeader(data.state ?? state, systemPrompt, data.parent, data.subprocesses);
+        }
+      }).catch(() => {
+        renderHeader(state, systemPrompt);
+      });
     } catch { /* ignore */ }
   });
 
@@ -131,10 +208,38 @@ function connectSSE(id, initialState) {
   };
 }
 
-function renderHeader(state, systemPrompt) {
+function renderHeader(state, systemPrompt, parent, subprocesses) {
   const dur = ((new Date(state.updatedAt) - new Date(state.startedAt)) / 1000).toFixed(0);
   const tu = state.tokenUsage ?? {};
   const pct = tu.total ? ((tu.input / (state.config?.session?.maxContext ?? tu.total)) * 100).toFixed(1) : 0;
+
+  const parentHtml = parent
+    ? `<div class="header-relation">
+         <span class="label">Parent</span>
+         <a class="relation-link" href="#${parent.id}" onclick="loadSession('${parent.id}');return false;">
+           ${esc(parent.skill)} <span class="relation-id">${parent.id.slice(0, 8)}</span>
+         </a>
+         ${parent.process_name ? `<span class="relation-process">via <code>${esc(parent.process_name)}</code></span>` : ""}
+       </div>`
+    : "";
+
+  const subprocessHtml = (subprocesses && subprocesses.length)
+    ? `<div class="header-subprocesses">
+         <div class="label">Sub-processes (${subprocesses.length})</div>
+         <ul class="subprocess-list">
+           ${subprocesses.map((sp) => `
+             <li>
+               <a class="relation-link" href="#${sp.id}" onclick="loadSession('${sp.id}');return false;">
+                 <code>${esc(sp.process_name ?? "(unnamed)")}</code>
+                 <span class="relation-skill">${esc(sp.skill)}</span>
+                 <span class="relation-id">${sp.id.slice(0, 8)}</span>
+                 <span class="badge badge-${sp.status}">${sp.status}</span>
+               </a>
+             </li>
+           `).join("")}
+         </ul>
+       </div>`
+    : "";
 
   document.getElementById("session-header").innerHTML = `
     <div class="header-title">
@@ -150,6 +255,8 @@ function renderHeader(state, systemPrompt) {
       <span><span class="label">Tokens</span> ${formatTokens(tu.input)} in / ${formatTokens(tu.output)} out</span>
     </div>
     <div class="token-bar"><div class="token-bar-fill" style="width:${Math.min(pct, 100)}%"></div></div>
+    ${parentHtml}
+    ${subprocessHtml}
     ${systemPrompt ? `
     <details class="system-prompt">
       <summary>System Prompt / Skill Instructions (${formatChars(systemPrompt.length)})</summary>

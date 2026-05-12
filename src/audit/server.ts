@@ -74,6 +74,56 @@ function sanitizeState(state: SessionState): SessionState {
   return s;
 }
 
+/** Walk the sessions dir and return parent/child relationships for one id.
+ *  Returns the parent stub (if state.parent_id is set) and the list of
+ *  sub-processes whose parent_id points back at this session. */
+function collectRelations(
+  dir: string,
+  id: string,
+  state: SessionState
+): {
+  parent: { id: string; skill: string; process_name?: string } | null;
+  subprocesses: Array<{
+    id: string;
+    skill: string;
+    process_name?: string;
+    status: string;
+    startedAt: string;
+  }>;
+} {
+  let parent: { id: string; skill: string; process_name?: string } | null = null;
+  if (state.parent_id) {
+    try {
+      const ps = readState(dir, state.parent_id);
+      parent = { id: ps.id, skill: ps.skillName, process_name: state.process_name };
+    } catch { /* parent dir missing — leave null */ }
+  }
+
+  const subprocesses: Array<{ id: string; skill: string; process_name?: string; status: string; startedAt: string }> = [];
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name === id) continue;
+      try {
+        const cs = readState(dir, e.name);
+        if (cs.parent_id === id) {
+          subprocesses.push({
+            id: cs.id,
+            skill: cs.skillName,
+            process_name: cs.process_name,
+            status: cs.status,
+            startedAt: cs.startedAt,
+          });
+        }
+      } catch { /* skip */ }
+    }
+    subprocesses.sort(
+      (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+    );
+  } catch { /* sessions dir unreadable */ }
+  return { parent, subprocesses };
+}
+
 // ---------------------------------------------------------------------------
 // Session management helpers
 // ---------------------------------------------------------------------------
@@ -322,7 +372,8 @@ export function startAuditServer(sessionsDir: string, port = 3900) {
           const state = sanitizeState(readState(absSessionsDir, id));
           const transcript = readTranscript(absSessionsDir, id);
           const systemPrompt = readSystemPrompt(absSessionsDir, id);
-          return Response.json({ state, transcript, systemPrompt });
+          const { parent, subprocesses } = collectRelations(absSessionsDir, id, state);
+          return Response.json({ state, transcript, systemPrompt, parent, subprocesses });
         } catch (err) {
           return Response.json({ error: String(err) }, { status: 404 });
         }

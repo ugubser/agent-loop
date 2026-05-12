@@ -125,21 +125,30 @@ program
   .description("Start a new agent session. Omit skill for auto-routing mode.")
   .option("-c, --config <path>", "Config file path", "config.yaml")
   .option("-t, --task <text>", "Task description for the session")
-  .action(async (skill: string | undefined, opts: { config: string; task?: string }) => {
+  .option("--parent <uuid>", "Parent session UUID — usually picked up from AGENT_LOOP_PARENT_SESSION env var")
+  .option("--process-name <name>", "Logical name this session is dispatched under — usually picked up from AGENT_LOOP_PROCESS_NAME env var")
+  .action(async (skill: string | undefined, opts: { config: string; task?: string; parent?: string; processName?: string }) => {
     const config = loadConfig(opts.config);
     const store = new FileStore(config.persistence.dir);
     fs.mkdirSync(config.persistence.dir, { recursive: true });
 
+    // CLI banners go to stderr — they are infrastructure-level info, not data.
+    // Keeping them off stdout means a parent agent-loop session that spawns
+    // this one via a CLI tool doesn't have agent-loop UUIDs in its LLM context.
     if (skill) {
-      console.log(`Starting session with skill: ${skill}`);
+      console.error(`Starting session with skill: ${skill}`);
     } else {
-      console.log("Starting session in auto-routing mode");
+      console.error("Starting session in auto-routing mode");
     }
-    if (opts.task) console.log(`Task: ${opts.task}`);
+    if (opts.task) console.error(`Task: ${opts.task}`);
+
+    const parentId = opts.parent ?? process.env.AGENT_LOOP_PARENT_SESSION ?? undefined;
+    const processName = opts.processName ?? process.env.AGENT_LOOP_PROCESS_NAME ?? undefined;
+    if (parentId) console.error(`Parent session: ${parentId}${processName ? ` (process_name: ${processName})` : ""}`);
 
     try {
-      const sessionId = await startNewSession(skill, config, store, opts.task, opts.config);
-      console.log(`\nSession ${sessionId} finished.`);
+      const sessionId = await startNewSession(skill, config, store, opts.task, opts.config, { parentId, processName });
+      console.error(`\nSession ${sessionId} finished.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);
@@ -159,10 +168,11 @@ program
     const store = new FileStore(config.persistence.dir);
     const sessionId = await resolveSessionId(session, store);
 
-    console.log(`Resuming session: ${sessionId}`);
+    // Banners on stderr — see comment on `run` command above.
+    console.error(`Resuming session: ${sessionId}`);
     try {
       await resumeSession(sessionId, config, store);
-      console.log(`\nSession ${sessionId} finished.`);
+      console.error(`\nSession ${sessionId} finished.`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Error: ${msg}`);

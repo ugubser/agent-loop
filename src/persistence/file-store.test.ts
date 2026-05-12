@@ -211,4 +211,61 @@ describe("FileStore", () => {
       expect(sessions).toHaveLength(0);
     });
   });
+
+  describe("sub-process lookup", () => {
+    it("listSubProcesses returns only children of given parent", async () => {
+      const parent = makeState({ id: "parent-id" });
+      const childA = makeState({ id: "child-a", parent_id: "parent-id", process_name: "run_build" });
+      const childB = makeState({ id: "child-b", parent_id: "parent-id", process_name: "run_build_redacted" });
+      const unrelated = makeState({ id: "unrelated" });
+      await store.initSession("parent-id", parent);
+      await store.initSession("child-a", childA);
+      await store.initSession("child-b", childB);
+      await store.initSession("unrelated", unrelated);
+
+      const subs = await store.listSubProcesses("parent-id");
+      expect(subs).toHaveLength(2);
+      expect(subs.map((s) => s.id).sort()).toEqual(["child-a", "child-b"]);
+    });
+
+    it("findSubProcessByName returns the matching child", async () => {
+      const parent = makeState({ id: "parent-id" });
+      const child = makeState({ id: "child-a", parent_id: "parent-id", process_name: "run_build" });
+      await store.initSession("parent-id", parent);
+      await store.initSession("child-a", child);
+
+      const found = await store.findSubProcessByName("parent-id", "run_build");
+      expect(found?.id).toBe("child-a");
+    });
+
+    it("findSubProcessByName returns null when no match", async () => {
+      const parent = makeState({ id: "parent-id" });
+      await store.initSession("parent-id", parent);
+
+      const found = await store.findSubProcessByName("parent-id", "missing");
+      expect(found).toBeNull();
+    });
+
+    it("findSubProcessByName returns the most recent when re-dispatched", async () => {
+      const parent = makeState({ id: "parent-id" });
+      const older = makeState({
+        id: "child-older",
+        parent_id: "parent-id",
+        process_name: "run_build",
+        updatedAt: "2026-01-01T00:00:00Z",
+      });
+      const newer = makeState({
+        id: "child-newer",
+        parent_id: "parent-id",
+        process_name: "run_build",
+        updatedAt: "2026-01-02T00:00:00Z",
+      });
+      await store.initSession("parent-id", parent);
+      await store.initSession("child-older", older);
+      await store.initSession("child-newer", newer);
+
+      const found = await store.findSubProcessByName("parent-id", "run_build");
+      expect(found?.id).toBe("child-newer");
+    });
+  });
 });

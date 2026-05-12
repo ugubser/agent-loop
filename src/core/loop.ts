@@ -18,7 +18,7 @@ import {
 } from "../skills/loader.js";
 import { FileStore } from "../persistence/file-store.js";
 import { trimToolContext, autoTrimConsumedResults } from "./context-trim.js";
-import type { ToolSchema, SkillSummary } from "../types.js";
+import type { ToolSchema, SkillSummary, SkillDef } from "../types.js";
 
 // Provider interface — any object with complete() and summarize()
 export type Provider = AnthropicProvider | OpenAICompatProvider;
@@ -310,6 +310,11 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
             if (skill.tools.length > 0) {
               executor.registerAll(skill.tools);
             }
+            if (skill.builtins.length > 0) {
+              for (const b of skill.builtins) {
+                executor.registerBuiltin(b.name);
+              }
+            }
 
             // Update system prompt with skill instructions + keep skill catalog visible
             session.systemPrompt = buildSystemPrompt({
@@ -335,9 +340,12 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
           continue;
         }
 
-        // Handle CLI tools
+        // Handle CLI tools + built-ins. Built-ins are dispatched the same
+        // way (executor.execute knows how to route) but have no CliToolDef,
+        // so resolve() returns undefined for them; check isBuiltin first.
+        const isBuiltin = executor.isBuiltin(toolCall.name);
         const tool = executor.resolve(toolCall.name);
-        if (!tool) {
+        if (!tool && !isBuiltin) {
           await session.addToolResult(
             toolCall.id,
             `ERROR: Unknown tool "${toolCall.name}"`,
@@ -357,8 +365,9 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
           await session.addToolResult(toolCall.id, `ERROR: ${message}`, true);
         }
 
-        // Context trimming: if the tool has keepLast configured, trim older pairs
-        const keepLast = tool.context?.keepLast;
+        // Context trimming: if the tool has keepLast configured, trim older
+        // pairs. Built-ins have no CliToolDef so no keep_last config — skip.
+        const keepLast = tool?.context?.keepLast;
         if (keepLast !== undefined) {
           const before = session.messages.length;
           const trimmed = trimToolContext(session.messages, toolCall.name, keepLast);
@@ -397,8 +406,14 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
       }
 
       // 5b. Loop detection — track tool call signatures (hash full input
-      //     so calls with different arguments are not flagged as loops)
+      //     so calls with different arguments are not flagged as loops).
+      //     Built-in polling tools (`check_process`, `resume_process`)
+      //     are exempt — they're designed to be called repeatedly with
+      //     identical arguments while the underlying sub-process advances.
+      //     The skill instructions handle the "really stuck" case via
+      //     pending_questions progress checks.
       for (const toolCall of toolUseBlocks) {
+        if (executor.isBuiltin(toolCall.name)) continue;
         const sig = `${toolCall.name}:${JSON.stringify(toolCall.input)}`;
         recentToolSigs.push(sig);
         if (recentToolSigs.length > 6) recentToolSigs.shift();
@@ -465,7 +480,8 @@ export async function startNewSession(
   config: AgentConfig,
   store: FileStore,
   task?: string,
-  configPath?: string
+  configPath?: string,
+  options?: { parentId?: string; processName?: string }
 ): Promise<string> {
   const skillCatalog = await discoverSkills(config.skills.dirs);
   const executor = new CliToolExecutor(
@@ -475,6 +491,7 @@ export async function startNewSession(
 
   let sessionSkillName: string;
   let skillSummaries: SkillSummary[] | undefined;
+  let activeSkill: SkillDef | undefined;
 
   if (skillName && skillName !== "auto") {
     // Direct skill mode — load a specific skill
@@ -485,9 +502,14 @@ export async function startNewSession(
         `Skill "${skillName}" not found. Available: ${available || "none"}`
       );
     }
-    const skill = await loadSkill(skillPath);
-    if (skill.tools.length > 0) {
-      executor.registerAll(skill.tools);
+    activeSkill = await loadSkill(skillPath);
+    if (activeSkill.tools.length > 0) {
+      executor.registerAll(activeSkill.tools);
+    }
+    if (activeSkill.builtins.length > 0) {
+      for (const b of activeSkill.builtins) {
+        executor.registerBuiltin(b.name);
+      }
     }
     sessionSkillName = skillName;
   } else {
@@ -496,7 +518,12 @@ export async function startNewSession(
   }
 
   // Create session
-  const session = await Session.create(sessionSkillName, config, store);
+  const session = await Session.create(sessionSkillName, config, store, {
+    parentId: options?.parentId,
+    processName: options?.processName,
+    configPath,
+  });
+  executor.setSessionContext(session.id, store);
   const lock = await store.acquireLock(session.id);
 
   // Build system prompt
@@ -507,9 +534,8 @@ export async function startNewSession(
       `Router mode — available skills: ${skillSummaries.map((s) => s.name).join(", ")}`
     );
   } else {
-    const skillPath = skillCatalog.get(sessionSkillName)!;
-    const skill = await loadSkill(skillPath);
-    session.systemPrompt = buildSystemPrompt({ skill, task, configPath });
+    // activeSkill was loaded above; reuse it for the system prompt
+    session.systemPrompt = buildSystemPrompt({ skill: activeSkill!, task, configPath });
   }
 
   // Add initial user message with the task
@@ -566,6 +592,7 @@ export async function resumeSession(
     config.tools.cli.allowedCommands,
     config.tools.cli.timeout
   );
+  executor.setSessionContext(session.id, store);
 
   let skillSummaries: SkillSummary[] | undefined;
   const isRouterMode = session.skillName === "auto";
@@ -580,6 +607,11 @@ export async function resumeSession(
     const skill = await loadSkill(skillPath);
     if (skill.tools.length > 0) {
       executor.registerAll(skill.tools);
+    }
+    if (skill.builtins.length > 0) {
+      for (const b of skill.builtins) {
+        executor.registerBuiltin(b.name);
+      }
     }
     if (!session.systemPrompt) {
       session.systemPrompt = buildSystemPrompt({ skill });

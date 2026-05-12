@@ -32,7 +32,12 @@ export class Session {
   static async create(
     skillName: string,
     config: AgentConfig,
-    store: FileStore
+    store: FileStore,
+    options?: {
+      parentId?: string;
+      processName?: string;
+      configPath?: string;
+    }
   ): Promise<Session> {
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -45,6 +50,9 @@ export class Session {
       iteration: 0,
       tokenUsage: { input: 0, output: 0, total: 0 },
       config,
+      ...(options?.parentId ? { parent_id: options.parentId } : {}),
+      ...(options?.processName ? { process_name: options.processName } : {}),
+      ...(options?.configPath ? { config_path: options.configPath } : {}),
     };
     await store.initSession(id, state);
     return new Session(state, store);
