@@ -90,14 +90,22 @@ async function summarizeSubProcess(
   lines.push(`iteration: ${state.iteration}`);
   lines.push(`tokens: ${state.tokenUsage.total}`);
 
-  // Walk the transcript backwards to find the most recent tool_result
-  // whose content is parseable JSON; pull build-relevant fields out of it.
+  // Walk the transcript backwards to find:
+  //   1. `lastToolResult`: the absolute last tool_result (for raw context)
+  //   2. The most recent tool_result whose content looks like an
+  //      `build_instrument` response (JSON with a `status` field) — that's
+  //      where we pull build_status / mcp_session_id / pending_questions
+  //      / object_count / saved_to from.
+  // Without (2), a stage that ended with an incidental tool call
+  // (e.g. save_file writing the session_id to disk) would mask the
+  // earlier successful build_instrument response.
   let buildStatus: string | undefined;
   let pendingQuestions: number | undefined;
   let objectCount: number | undefined;
   let savedTo: string | undefined;
   let mcpSessionId: string | undefined;
   let lastToolResult: string | undefined;
+  let buildResultPreview: string | undefined; // preview of the build_instrument response if found
 
   try {
     const transcript = await store.readTranscript(state.id);
@@ -109,24 +117,41 @@ async function summarizeSubProcess(
       if (!Array.isArray(content)) continue;
       const block = content[0];
       if (!block || typeof block.content !== "string") continue;
-      lastToolResult = truncate(block.content, 500);
+      // Capture the absolute last tool_result (first one we encounter, walking back)
+      if (lastToolResult === undefined) {
+        lastToolResult = truncate(block.content, 500);
+      }
+      // Try to extract build_instrument fields from this entry
       try {
         const parsed = JSON.parse(block.content) as Record<string, unknown>;
-        if (typeof parsed.status === "string") buildStatus = parsed.status;
-        if (Array.isArray(parsed.questions)) pendingQuestions = (parsed.questions as unknown[]).length;
-        const summary = parsed.summary as Record<string, unknown> | undefined;
-        if (summary && typeof summary.object_count === "number") {
-          objectCount = summary.object_count;
+        // We accept a build_instrument response as having a string `status`
+        // field. The actual values are: needs_input,
+        // needs_property_review, complete, complete_with_warnings, error.
+        if (typeof parsed.status === "string") {
+          buildStatus = parsed.status;
+          if (Array.isArray(parsed.questions)) pendingQuestions = (parsed.questions as unknown[]).length;
+          const summary = parsed.summary as Record<string, unknown> | undefined;
+          if (summary && typeof summary.object_count === "number") {
+            objectCount = summary.object_count;
+          }
+          if (typeof parsed.saved_to === "string") savedTo = parsed.saved_to;
+          if (typeof parsed.session_id === "string") mcpSessionId = parsed.session_id;
+          if (typeof parsed.active_session_id === "string" && !mcpSessionId) {
+            mcpSessionId = parsed.active_session_id;
+          }
+          buildResultPreview = truncate(block.content, 500);
+          break; // found the most recent build_instrument response; stop walking
         }
-        if (typeof parsed.saved_to === "string") savedTo = parsed.saved_to;
-        if (typeof parsed.session_id === "string") mcpSessionId = parsed.session_id;
-        if (typeof parsed.active_session_id === "string" && !mcpSessionId) {
-          mcpSessionId = parsed.active_session_id;
-        }
-      } catch { /* not JSON — skip parsed fields, keep lastToolResult */ }
-      break;
+      } catch { /* not JSON — keep walking */ }
     }
   } catch { /* missing transcript — fall through */ }
+
+  // If we found a build_instrument response, prefer its preview as the
+  // `last_tool_result` field — that's the result the orchestrator cares
+  // about. Otherwise show the literal last tool_result.
+  if (buildResultPreview !== undefined) {
+    lastToolResult = buildResultPreview;
+  }
 
   if (buildStatus !== undefined) lines.push(`build_status: ${buildStatus}`);
   if (pendingQuestions !== undefined) lines.push(`pending_questions: ${pendingQuestions}`);

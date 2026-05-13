@@ -103,6 +103,59 @@ describe("Built-in tools", () => {
       expect(result).toContain("pending_questions: 2");
     });
 
+    it("finds an earlier build_instrument response when the last tool_result is not JSON (regression)", async () => {
+      // Reproduces session 1b69f5f3: stage-1 ended with a save_file call
+      // whose result was just "build_xyz" (a plain string), masking the
+      // earlier build_instrument response.
+      const parent = makeState({ id: "parent" });
+      const child = makeState({ id: "child", parent_id: "parent", process_name: "run_build" });
+      await store.initSession("parent", parent);
+      await store.initSession("child", child);
+
+      // Earlier: a real build_instrument result with the build fields
+      const buildEntry: TranscriptEntry = {
+        type: "tool_result",
+        timestamp: "2026-01-01T00:00:00Z",
+        iteration: 3,
+        data: {
+          content: [
+            {
+              content: JSON.stringify({
+                status: "needs_property_review",
+                session_id: "build_xyz123",
+                questions: [{ id: "po1" }, { id: "po2" }, { id: "po3" }],
+              }),
+            },
+          ],
+        },
+      };
+      // Later (last): a plain string output from save_file or similar
+      const saveEntry: TranscriptEntry = {
+        type: "tool_result",
+        timestamp: "2026-01-01T00:01:00Z",
+        iteration: 4,
+        data: {
+          content: [
+            { content: "build_xyz123\n" },
+          ],
+        },
+      };
+      await store.appendTranscript("child", buildEntry);
+      await store.appendTranscript("child", saveEntry);
+
+      const result = await BUILTIN_HANDLERS.check_process.execute(
+        { name: "run_build" },
+        { parentSessionId: "parent", store }
+      );
+
+      // Despite the save_file result being last, we should still surface
+      // build_status, mcp_session_id, and pending_questions from the
+      // earlier build_instrument response.
+      expect(result).toContain("build_status: needs_property_review");
+      expect(result).toContain("mcp_session_id: build_xyz123");
+      expect(result).toContain("pending_questions: 3");
+    });
+
     it("includes object_count and saved_to when present", async () => {
       const parent = makeState({ id: "parent" });
       const child = makeState({ id: "child", parent_id: "parent", process_name: "run_build" });
