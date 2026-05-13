@@ -4,7 +4,10 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { FileStore } from "../persistence/file-store.js";
 import { BUILTIN_HANDLERS } from "./builtin.js";
+import { resolvePrompts } from "../core/prompts.js";
 import type { SessionState, TranscriptEntry } from "../types.js";
+
+const prompts = resolvePrompts(undefined);
 
 function makeState(overrides?: Partial<SessionState>): SessionState {
   return {
@@ -21,6 +24,7 @@ function makeState(overrides?: Partial<SessionState>): SessionState {
       skills: { dirs: ["./skills"] },
       persistence: { backend: "file", dir: "./sessions" },
       tools: { cli: { allowedCommands: ["echo"], timeout: 120 } },
+      prompts,
     },
     ...overrides,
   };

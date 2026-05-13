@@ -7,6 +7,7 @@ import { Session } from "./session.js";
 import { FileStore } from "../persistence/file-store.js";
 import { CliToolExecutor } from "../tools/cli.js";
 import { MockProvider } from "../../test/helpers/mock-provider.js";
+import { resolvePrompts } from "./prompts.js";
 import type { AgentConfig } from "../types.js";
 
 const testConfig: AgentConfig = {
@@ -15,6 +16,7 @@ const testConfig: AgentConfig = {
   skills: { dirs: ["./skills"] },
   persistence: { backend: "file", dir: "./sessions" },
   tools: { cli: { allowedCommands: ["echo"], timeout: 120 } },
+  prompts: resolvePrompts(undefined),
 };
 
 async function makeContext(

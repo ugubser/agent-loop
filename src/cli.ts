@@ -9,8 +9,11 @@ import { execFileSync } from "node:child_process";
 import { FileStore } from "./persistence/file-store.js";
 import { startNewSession, resumeSession } from "./core/loop.js";
 import { discoverSkills } from "./skills/loader.js";
+import { resolvePrompts } from "./core/prompts.js";
 
-const DEFAULT_CONFIG: AgentConfig = {
+// Defaults for everything EXCEPT prompts/thresholds. Prompts come from
+// config.prompts.default.yaml (always loaded) merged with any user override.
+const DEFAULT_CONFIG_BASE = {
   model: {
     provider: "anthropic",
     model: "claude-sonnet-4-6",
@@ -37,13 +40,23 @@ const DEFAULT_CONFIG: AgentConfig = {
 };
 
 export function loadConfig(configPath: string): AgentConfig {
+  let parsed: Record<string, unknown> = {};
+  let baseDir = process.cwd();
   try {
     const raw = fs.readFileSync(configPath, "utf-8");
-    const parsed = yaml.load(raw) as Record<string, unknown>;
-    return deepMerge(DEFAULT_CONFIG, parsed) as AgentConfig;
+    parsed = yaml.load(raw) as Record<string, unknown>;
+    baseDir = path.dirname(path.resolve(configPath));
   } catch {
-    return { ...DEFAULT_CONFIG };
+    // missing/unreadable config file — use the structural defaults below
   }
+  const merged = deepMerge(DEFAULT_CONFIG_BASE, parsed) as Record<string, unknown>;
+
+  // Resolve prompts: always load config.prompts.default.yaml, then layer
+  // any user override (path string or inline object) on top.
+  const override = merged.prompts as Record<string, unknown> | string | undefined;
+  merged.prompts = resolvePrompts(override, baseDir);
+
+  return merged as unknown as AgentConfig;
 }
 
 function deepMerge(target: unknown, source: unknown): unknown {

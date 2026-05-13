@@ -1,9 +1,10 @@
-import type { Message, ContentBlock, TranscriptEntry } from "../types.js";
+import type { Message, ContentBlock, TranscriptEntry, PromptsConfig } from "../types.js";
 import type { Session } from "./session.js";
+import { getPrompt, format } from "./prompts.js";
 
 /** Minimal provider interface needed for summarization */
 interface Summarizer {
-  summarize(text: string, model: string, targetTokens?: number): Promise<string>;
+  summarize(text: string, model: string, systemPrompt: string, targetTokens?: number): Promise<string>;
 }
 
 /**
@@ -19,6 +20,7 @@ export async function compactSession(
   session: Session,
   provider: Summarizer,
   model: string,
+  prompts: PromptsConfig,
   log?: (entry: TranscriptEntry) => void
 ): Promise<void> {
   const { needed, recentN } = session.getCompactionTarget();
@@ -36,10 +38,16 @@ export async function compactSession(
 
   const beforeTokens = session.contextTokens();
 
+  const targetTokens = 2000;
+  const summarizerSystem = format(
+    getPrompt(prompts, "compaction.summarizer_system"),
+    { target_tokens: targetTokens }
+  );
+
   try {
     // Serialize messages for summarization
     const text = serializeMessages(toSummarize);
-    const summary = await provider.summarize(text, model, 2000);
+    const summary = await provider.summarize(text, model, summarizerSystem, targetTokens);
 
     // Build new message array: summary + recent window
     const summaryMessage: Message = {
@@ -53,7 +61,7 @@ export async function compactSession(
     // Check if we still have enough headroom (>30% free)
     if (session.contextRatio() > 0.7 && recentN > 3) {
       // Re-compact more aggressively
-      await compactSession(session, provider, model, log);
+      await compactSession(session, provider, model, prompts, log);
       return;
     }
   } catch {
@@ -62,7 +70,7 @@ export async function compactSession(
     const kept = messages.slice(fallbackSplit);
     const truncationMessage: Message = {
       role: "user",
-      content: "[TRUNCATED — compaction failed, older context removed]",
+      content: getPrompt(prompts, "markers.compaction_fallback"),
     };
     session.replaceMessages([truncationMessage, ...kept]);
   }

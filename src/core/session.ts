@@ -12,9 +12,9 @@ import type {
   ProviderResponse,
 } from "../types.js";
 import type { FileStore } from "../persistence/file-store.js";
+import { getPrompt, getThreshold } from "./prompts.js";
 
 const DEFAULT_TOOL_RESULT_MAX_CHARS = 100_000; // ~25,000 tokens at 4 chars/token
-const TRUNCATION_MARKER = "\n\n[TRUNCATED — result exceeded size limit]";
 
 export class Session {
   private _messages: Message[] = [];
@@ -185,7 +185,7 @@ export class Session {
     let truncated = content;
     if (content.length > maxChars) {
       truncated =
-        content.slice(0, maxChars) + TRUNCATION_MARKER;
+        content.slice(0, maxChars) + getPrompt(this._state.config.prompts, "markers.truncation");
     }
 
     const block: ToolResultBlock = {
@@ -315,9 +315,13 @@ export class Session {
     recentN: number;
   } {
     const ratio = this.contextRatio();
-    if (ratio >= 0.9) return { needed: "hard", recentN: 3 };
-    if (ratio >= 0.7) return { needed: "soft", recentN: 10 };
-    return { needed: "none", recentN: 10 };
+    const hardRatio = getThreshold(this._state.config.prompts, "compaction_hard_ratio");
+    const softRatio = getThreshold(this._state.config.prompts, "compaction_soft_ratio");
+    const hardN = getThreshold(this._state.config.prompts, "compaction_hard_recent_n");
+    const softN = getThreshold(this._state.config.prompts, "compaction_soft_recent_n");
+    if (ratio >= hardRatio) return { needed: "hard", recentN: hardN };
+    if (ratio >= softRatio) return { needed: "soft", recentN: softN };
+    return { needed: "none", recentN: softN };
   }
 
   // --- Compaction support ---

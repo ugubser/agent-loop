@@ -18,6 +18,7 @@ import {
 } from "../skills/loader.js";
 import { FileStore } from "../persistence/file-store.js";
 import { trimToolContext, autoTrimConsumedResults } from "./context-trim.js";
+import { getPrompt, getThreshold, format } from "./prompts.js";
 import type { ToolSchema, SkillSummary, SkillDef } from "../types.js";
 
 // Provider interface — any object with complete() and summarize()
@@ -98,6 +99,7 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
           session,
           provider,
           config.model.model,
+          config.prompts,
           async (entry) => {
             await store.appendTranscript(session.id, entry);
           }
@@ -208,7 +210,8 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
 
         if (!hasText) {
           consecutiveTextOnly++;
-          if (consecutiveTextOnly >= 5) {
+          const emptyMax = getThreshold(config.prompts, "empty_response_max_attempts");
+          if (consecutiveTextOnly >= emptyMax) {
             // Too many empty retries — give up
             await session.setCompleted();
             await session.forceCheckpoint();
@@ -220,8 +223,8 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
           const nudge: Message = {
             role: "user",
             content: consecutiveTextOnly === 1
-              ? "Your previous response was empty. Review the last tool result and continue with the next step."
-              : `Empty response ${consecutiveTextOnly} times in a row. You MUST call a tool or provide a final summary. Do not return an empty response.`,
+              ? getPrompt(config.prompts, "nudges.empty_response_first")
+              : format(getPrompt(config.prompts, "nudges.empty_response_repeated"), { n: consecutiveTextOnly }),
           };
           session.messages.push(nudge);
           await store.appendTranscript(session.id, {
@@ -230,7 +233,7 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
             iteration: session.iteration,
             data: nudge,
           });
-          console.error(`[empty-response] Injected nudge (attempt ${consecutiveTextOnly}/5) at iteration ${session.iteration}`);
+          console.error(`[empty-response] Injected nudge (attempt ${consecutiveTextOnly}/${emptyMax}) at iteration ${session.iteration}`);
           continue;
         }
 
@@ -244,11 +247,13 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
           .filter((b): b is { type: "text"; text: string } => b.type === "text")
           .map((b) => b.text)
           .join("");
-        const looksComplete = responseText.length > 200 &&
+        const completionMinChars = getThreshold(config.prompts, "text_only_completion_min_chars");
+        const looksComplete = responseText.length > completionMinChars &&
           /\b(complete|completed|finished|successful|done)\b/i.test(responseText);
 
-        if (consecutiveTextOnly >= 3 || (consecutiveTextOnly >= 1 && looksComplete)) {
-          // Genuinely done — either 3 consecutive text responses,
+        const textOnlyMax = getThreshold(config.prompts, "text_only_max_attempts");
+        if (consecutiveTextOnly >= textOnlyMax || (consecutiveTextOnly >= 1 && looksComplete)) {
+          // Genuinely done — either N consecutive text responses,
           // or a substantial summary with completion signals
           await session.setCompleted();
           await session.forceCheckpoint();
@@ -258,7 +263,7 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         // Inject a directive continuation prompt.
         const continuation: Message = {
           role: "user",
-          content: "You responded with text instead of a tool call. If there are pending questions, unanswered steps, or remaining work, call the appropriate tool NOW. Only provide a final summary if the task is fully complete.",
+          content: getPrompt(config.prompts, "nudges.text_only_continuation"),
         };
         session.messages.push(continuation);
         await store.appendTranscript(session.id, {
@@ -318,6 +323,7 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
 
             // Update system prompt with skill instructions + keep skill catalog visible
             session.systemPrompt = buildSystemPrompt({
+              prompts: config.prompts,
               skill,
               task: undefined, // task is already in the conversation
               availableSkills: ctx.skillSummaries,
@@ -370,7 +376,7 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         const keepLast = tool?.context?.keepLast;
         if (keepLast !== undefined) {
           const before = session.messages.length;
-          const trimmed = trimToolContext(session.messages, toolCall.name, keepLast);
+          const trimmed = trimToolContext(session.messages, toolCall.name, keepLast, config.prompts);
           if (trimmed !== session.messages) {
             session.replaceMessages(trimmed);
             console.log(`[trim] ${toolCall.name}: ${before} → ${trimmed.length} messages (keepLast=${keepLast})`);
@@ -386,10 +392,11 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
         );
         if (hasJsonError) {
           consecutiveMalformedJson++;
-          if (consecutiveMalformedJson >= 3) {
+          const malformedJsonThreshold = getThreshold(config.prompts, "malformed_json_threshold");
+          if (consecutiveMalformedJson >= malformedJsonThreshold) {
             const advisory: Message = {
               role: "user",
-              content: "You have failed to produce valid JSON 3 times in a row. Simplify your response — send fewer fields or split into multiple smaller calls.",
+              content: getPrompt(config.prompts, "nudges.malformed_json"),
             };
             session.messages.push(advisory);
             await store.appendTranscript(session.id, {
@@ -412,19 +419,24 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
       //     identical arguments while the underlying sub-process advances.
       //     The skill instructions handle the "really stuck" case via
       //     pending_questions progress checks.
+      const loopWindowSize = getThreshold(config.prompts, "loop_window_size");
+      const loopMatchLength = getThreshold(config.prompts, "loop_match_length");
+      const loopPauseWarnings = getThreshold(config.prompts, "loop_pause_warnings");
+
       for (const toolCall of toolUseBlocks) {
         if (executor.isBuiltin(toolCall.name)) continue;
         const sig = `${toolCall.name}:${JSON.stringify(toolCall.input)}`;
         recentToolSigs.push(sig);
-        if (recentToolSigs.length > 6) recentToolSigs.shift();
+        if (recentToolSigs.length > loopWindowSize) recentToolSigs.shift();
       }
 
-      if (recentToolSigs.length >= 3) {
-        const last3 = recentToolSigs.slice(-3);
-        if (last3[0] === last3[1] && last3[1] === last3[2]) {
+      if (recentToolSigs.length >= loopMatchLength) {
+        const lastN = recentToolSigs.slice(-loopMatchLength);
+        const allSame = lastN.every((s) => s === lastN[0]);
+        if (allSame) {
           loopWarningCount++;
-          if (loopWarningCount >= 2) {
-            console.error(`\nLoop detected: tool called identically 6+ times at iteration ${session.iteration}`);
+          if (loopWarningCount >= loopPauseWarnings) {
+            console.error(`\nLoop detected: tool called identically ${loopMatchLength * 2}+ times at iteration ${session.iteration}`);
             await session.setPaused("loop_detected");
             await session.forceCheckpoint();
             return;
@@ -432,7 +444,7 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
           // First warning — inject advisory into messages
           const advisory: Message = {
             role: "user",
-            content: "WARNING: You appear to be in a loop — the last 3 tool calls produced the same result. Change your approach or accept the current state and move on.",
+            content: getPrompt(config.prompts, "nudges.loop_detected"),
           };
           session.messages.push(advisory);
           await store.appendTranscript(session.id, {
@@ -445,7 +457,7 @@ export async function runLoop(ctx: LoopContext): Promise<void> {
       }
 
       // 5c. Auto-trim consumed tool results from prior iterations
-      const autoTrimmed = autoTrimConsumedResults(session.messages, executor.preservedToolNames());
+      const autoTrimmed = autoTrimConsumedResults(session.messages, config.prompts, executor.preservedToolNames());
       if (autoTrimmed !== session.messages) {
         const beforeTokens = session.contextTokens();
         session.replaceMessages(autoTrimmed);
@@ -529,13 +541,13 @@ export async function startNewSession(
   // Build system prompt
   if (sessionSkillName === "auto") {
     skillSummaries = await loadSkillSummaries(config.skills.dirs);
-    session.systemPrompt = buildRouterPrompt({ skills: skillSummaries, task, configPath });
+    session.systemPrompt = buildRouterPrompt({ prompts: config.prompts, skills: skillSummaries, task, configPath });
     console.log(
       `Router mode — available skills: ${skillSummaries.map((s) => s.name).join(", ")}`
     );
   } else {
     // activeSkill was loaded above; reuse it for the system prompt
-    session.systemPrompt = buildSystemPrompt({ skill: activeSkill!, task, configPath });
+    session.systemPrompt = buildSystemPrompt({ prompts: config.prompts, skill: activeSkill!, task, configPath });
   }
 
   // Add initial user message with the task
@@ -614,13 +626,13 @@ export async function resumeSession(
       }
     }
     if (!session.systemPrompt) {
-      session.systemPrompt = buildSystemPrompt({ skill });
+      session.systemPrompt = buildSystemPrompt({ prompts: config.prompts, skill });
     }
   } else {
     // Router mode — restore with skill catalog
     skillSummaries = await loadSkillSummaries(config.skills.dirs);
     if (!session.systemPrompt) {
-      session.systemPrompt = buildRouterPrompt({ skills: skillSummaries });
+      session.systemPrompt = buildRouterPrompt({ prompts: config.prompts, skills: skillSummaries });
     }
   }
 

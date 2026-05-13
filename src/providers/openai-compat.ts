@@ -166,15 +166,13 @@ export class OpenAICompatProvider {
   async summarize(
     text: string,
     model: string,
+    systemPrompt: string,
     targetTokens = 2000
   ): Promise<string> {
     const response = await this.complete({
       model,
       maxTokens: targetTokens,
-      system:
-        "You are a precise summarizer. Summarize the following conversation history into a concise narrative. " +
-        "Preserve: key findings, decisions made, errors encountered, and current task state. " +
-        `Target: under ${targetTokens} tokens. Be factual and complete.`,
+      system: systemPrompt,
       messages: [{ role: "user", content: text }],
     });
 

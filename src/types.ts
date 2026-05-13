@@ -59,6 +59,45 @@ export interface AgentConfig {
       maxResultChars?: number; // Truncate tool results beyond this (default: 100000)
     };
   };
+  // Fully resolved prompts/thresholds after loading config.prompts.default.yaml
+  // and merging any user override. See config.prompts.default.yaml for schema.
+  prompts: PromptsConfig;
+}
+
+export interface PromptsConfig {
+  identities: {
+    base: string;
+    router: string;
+  };
+  nudges: {
+    empty_response_first: string;
+    empty_response_repeated: string;     // {n}
+    text_only_continuation: string;
+    malformed_json: string;
+    loop_detected: string;
+  };
+  markers: {
+    truncation: string;
+    prior_result_summary: string;        // {name} {preview} {chars}
+    prior_call_summary: string;          // {name} {preview} {status}
+    compaction_fallback: string;
+  };
+  compaction: {
+    summarizer_system: string;           // {target_tokens}
+  };
+  thresholds: {
+    empty_response_max_attempts: number;
+    text_only_max_attempts: number;
+    text_only_completion_min_chars: number;
+    malformed_json_threshold: number;
+    loop_window_size: number;
+    loop_match_length: number;
+    loop_pause_warnings: number;
+    compaction_soft_ratio: number;
+    compaction_hard_ratio: number;
+    compaction_soft_recent_n: number;
+    compaction_hard_recent_n: number;
+  };
 }
 
 // Messages matching Anthropic API shape

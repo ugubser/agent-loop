@@ -7,6 +7,7 @@ import { Session } from "../../src/core/session.js";
 import { FileStore } from "../../src/persistence/file-store.js";
 import { CliToolExecutor } from "../../src/tools/cli.js";
 import { MockProvider } from "../helpers/mock-provider.js";
+import { resolvePrompts } from "../../src/core/prompts.js";
 import type { AgentConfig } from "../../src/types.js";
 
 const testConfig: AgentConfig = {
@@ -15,6 +16,7 @@ const testConfig: AgentConfig = {
   skills: { dirs: ["./skills"] },
   persistence: { backend: "file", dir: "" }, // Set in beforeEach
   tools: { cli: { allowedCommands: ["echo"], timeout: 120 } },
+  prompts: resolvePrompts(undefined),
 };
 
 async function setupContext(

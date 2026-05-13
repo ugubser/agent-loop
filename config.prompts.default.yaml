@@ -1,0 +1,130 @@
+# config.prompts.default.yaml
+#
+# Default prompts and thresholds used by agent-loop. Always loaded at
+# startup. A user config can override any subset by setting
+# `prompts: ./your-overrides.yaml` (path) or `prompts: { ... }` (inline)
+# in its config YAML; missing keys still fall through to the values in
+# this file. There are no code-baked fallbacks — if a required key is
+# missing from BOTH this file and any user override, agent-loop fails
+# at startup.
+#
+# Placeholders in strings are written as `{name}` and resolved at
+# emission time. Sites that use placeholders are noted in comments.
+
+identities:
+  # Prepended to every skill-mode system prompt. The skill's own
+  # instructions are appended after this and after the Available Skills
+  # section. The base instructions here are deliberately generic; skill
+  # bodies refine them. Be careful editing — many skills assume the
+  # "Summarize your progress periodically" line and explicitly override
+  # it; if you remove the rule, audit dependent skills.
+  base: |
+    You are an autonomous agent running in a long-running loop. You have access to tools defined by your skill. Use them to accomplish the task.
+
+    Rules:
+    - Be systematic and thorough
+    - After each action, reflect on what you learned
+    - If a tool fails, try a different approach
+    - Summarize your progress periodically
+    - When the task is complete, provide a final summary
+
+  # Used in router (auto-skill) mode, when the agent picks its own skill
+  # via the built-in `use_skill` tool.
+  router: |
+    You are an autonomous agent with access to multiple skills. Each skill provides a set of tools for a specific domain.
+
+    To start working, call the use_skill tool with the skill that best matches the task. You can switch skills at any time by calling use_skill again.
+
+    Rules:
+    - Pick the most appropriate skill for the task
+    - If the task spans multiple domains, start with the primary skill and switch as needed
+    - Be systematic and thorough
+    - After each action, reflect on what you learned
+    - If a tool fails, try a different approach
+    - When the task is complete, provide a final summary
+
+nudges:
+  # Injected as a `user` message when the model returns an empty
+  # response (no text, no tool calls) for the first time in a row.
+  empty_response_first: "Your previous response was empty. Review the last tool result and continue with the next step."
+
+  # Injected on subsequent empty responses. Placeholder: {n} = the
+  # current consecutive empty-response count.
+  empty_response_repeated: "Empty response {n} times in a row. You MUST call a tool or provide a final summary. Do not return an empty response."
+
+  # Injected when the model returns non-empty text without any tool
+  # calls and the loop has decided it's not yet a "final summary".
+  text_only_continuation: "You responded with text instead of a tool call. If there are pending questions, unanswered steps, or remaining work, call the appropriate tool NOW. Only provide a final summary if the task is fully complete."
+
+  # Injected when malformed JSON has been emitted on `thresholds.malformed_json_threshold`
+  # consecutive tool calls.
+  malformed_json: "You have failed to produce valid JSON 3 times in a row. Simplify your response — send fewer fields or split into multiple smaller calls."
+
+  # Injected on the first loop-detector trip (last `loop_match_length`
+  # tool calls identical). On the second trip the session is paused.
+  loop_detected: "WARNING: You appear to be in a loop — the last 3 tool calls produced the same result. Change your approach or accept the current state and move on."
+
+markers:
+  # Appended when a single tool result exceeds `tools.cli.maxResultChars`.
+  truncation: "\n\n[TRUNCATED — result exceeded size limit]"
+
+  # Used by context-trim's `trimConsumedToolResults` to replace older
+  # tool results when not preserved via `context.preserve_result: true`.
+  # Placeholders: {name} = tool name, {preview} = first ~120 chars of
+  # the original content, {chars} = original content length.
+  prior_result_summary: "[Prior {name} result: {preview}… ({chars} chars trimmed)]"
+
+  # Used by context-trim's `trimOldToolPairs` to replace older call+result
+  # pairs when `keepLast` is set on a tool. Placeholders: {name}, {preview}
+  # = first ~120 chars of result, {status} = "ok" or "error".
+  prior_call_summary: "[Prior {name} call → {preview}… ({status})]"
+
+  # Used by `compaction.ts` as the fallback marker when LLM-driven
+  # compaction itself fails (e.g., provider error during summarisation).
+  compaction_fallback: "[TRUNCATED — compaction failed, older context removed]"
+
+compaction:
+  # System prompt sent to the provider's `summarize()` call. Placeholder:
+  # {target_tokens} = configured target length in tokens for the summary.
+  summarizer_system: |
+    You are a precise summarizer. Summarize the following conversation history into a concise narrative. Preserve: key findings, decisions made, errors encountered, and current task state. Target: under {target_tokens} tokens. Be factual and complete.
+
+thresholds:
+  # After this many consecutive empty responses, the session is declared
+  # completed (the model has given up). Nudges fire on attempts 1..(N-1).
+  empty_response_max_attempts: 5
+
+  # After this many consecutive text-only responses (non-empty but no
+  # tool calls), the session is declared completed.
+  text_only_max_attempts: 3
+
+  # A single text-only response of at least this many characters,
+  # containing completion keywords (`complete|completed|finished|
+  # successful|done`), is treated as a final summary and the session
+  # completes immediately.
+  text_only_completion_min_chars: 200
+
+  # After this many consecutive malformed-JSON tool-call attempts,
+  # inject the `nudges.malformed_json` advisory.
+  malformed_json_threshold: 3
+
+  # Loop detector keeps this many recent tool-call signatures.
+  loop_window_size: 6
+
+  # Loop detector trips when the last N of those signatures are all
+  # identical.
+  loop_match_length: 3
+
+  # On the Nth trip of the loop detector, the session is paused with
+  # reason `loop_detected`. Lower numbers = more aggressive pausing.
+  loop_pause_warnings: 2
+
+  # Context-budget ratio thresholds for triggering compaction.
+  # The "soft" path uses LLM summarization; "hard" path is more
+  # aggressive truncation.
+  compaction_soft_ratio: 0.7
+  compaction_hard_ratio: 0.9
+
+  # Number of recent messages preserved verbatim during compaction.
+  compaction_soft_recent_n: 10
+  compaction_hard_recent_n: 3

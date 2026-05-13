@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import matter from "gray-matter";
-import type { SkillDef, SkillSummary, CliToolDef, BuiltinToolDef } from "../types.js";
+import type { SkillDef, SkillSummary, CliToolDef, BuiltinToolDef, PromptsConfig } from "../types.js";
+import { getPrompt } from "../core/prompts.js";
 
 export async function loadSkill(skillPath: string): Promise<SkillDef> {
   const raw = fs.readFileSync(skillPath, "utf-8");
@@ -88,27 +89,6 @@ export async function discoverSkills(
   return skills;
 }
 
-const BASE_IDENTITY = `You are an autonomous agent running in a long-running loop. You have access to tools defined by your skill. Use them to accomplish the task.
-
-Rules:
-- Be systematic and thorough
-- After each action, reflect on what you learned
-- If a tool fails, try a different approach
-- Summarize your progress periodically
-- When the task is complete, provide a final summary`;
-
-const ROUTER_IDENTITY = `You are an autonomous agent with access to multiple skills. Each skill provides a set of tools for a specific domain.
-
-To start working, call the use_skill tool with the skill that best matches the task. You can switch skills at any time by calling use_skill again.
-
-Rules:
-- Pick the most appropriate skill for the task
-- If the task spans multiple domains, start with the primary skill and switch as needed
-- Be systematic and thorough
-- After each action, reflect on what you learned
-- If a tool fails, try a different approach
-- When the task is complete, provide a final summary`;
-
 export async function loadSkillSummaries(
   dirs: string[]
 ): Promise<SkillSummary[]> {
@@ -132,11 +112,15 @@ export async function loadSkillSummaries(
 }
 
 export function buildRouterPrompt(parts: {
+  prompts: PromptsConfig;
   skills: SkillSummary[];
   task?: string;
   configPath?: string;
 }): string {
-  const sections = [ROUTER_IDENTITY, `\nCurrent date/time: ${new Date().toISOString()}`];
+  const sections = [
+    getPrompt(parts.prompts, "identities.router"),
+    `\nCurrent date/time: ${new Date().toISOString()}`,
+  ];
 
   if (parts.configPath) {
     sections.push(`\nConfig file: ${parts.configPath} — use this path when dispatching sub-sessions.`);
@@ -155,12 +139,16 @@ export function buildRouterPrompt(parts: {
 }
 
 export function buildSystemPrompt(parts: {
+  prompts: PromptsConfig;
   skill: SkillDef;
   task?: string;
   availableSkills?: SkillSummary[];
   configPath?: string;
 }): string {
-  const sections = [BASE_IDENTITY, `\nCurrent date/time: ${new Date().toISOString()}`];
+  const sections = [
+    getPrompt(parts.prompts, "identities.base"),
+    `\nCurrent date/time: ${new Date().toISOString()}`,
+  ];
 
   if (parts.configPath) {
     sections.push(`\nConfig file: ${parts.configPath} — use this path when dispatching sub-sessions.`);

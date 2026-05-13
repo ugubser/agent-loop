@@ -9,6 +9,9 @@ import {
   buildSystemPrompt,
   buildRouterPrompt,
 } from "./loader.js";
+import { resolvePrompts } from "../core/prompts.js";
+
+const prompts = resolvePrompts(undefined);
 
 const VALID_SKILL = `---
 name: test-search
@@ -152,6 +155,7 @@ describe("loadSkillSummaries", () => {
 describe("buildRouterPrompt", () => {
   it("lists all skills and includes task", () => {
     const prompt = buildRouterPrompt({
+      prompts,
       skills: [
         { name: "research", description: "Web research" },
         { name: "coding", description: "Write code" },
@@ -168,6 +172,7 @@ describe("buildRouterPrompt", () => {
 
   it("works without task", () => {
     const prompt = buildRouterPrompt({
+      prompts,
       skills: [{ name: "research", description: "Web research" }],
     });
 
@@ -179,11 +184,13 @@ describe("buildRouterPrompt", () => {
 describe("buildSystemPrompt", () => {
   it("builds prompt with active skill", () => {
     const prompt = buildSystemPrompt({
+      prompts,
       skill: {
         name: "research",
         description: "Research agent",
         instructions: "Search the web and synthesize.",
         tools: [],
+        builtins: [],
       },
       task: "Research TypeScript history",
     });
@@ -197,7 +204,8 @@ describe("buildSystemPrompt", () => {
 
   it("includes available skills when provided", () => {
     const prompt = buildSystemPrompt({
-      skill: { name: "research", description: "", instructions: "Do research.", tools: [] },
+      prompts,
+      skill: { name: "research", description: "", instructions: "Do research.", tools: [], builtins: [] },
       availableSkills: [
         { name: "research", description: "Web research" },
         { name: "coding", description: "Write code" },
@@ -210,11 +218,13 @@ describe("buildSystemPrompt", () => {
 
   it("works without task", () => {
     const prompt = buildSystemPrompt({
+      prompts,
       skill: {
         name: "test",
         description: "",
         instructions: "Do stuff.",
         tools: [],
+        builtins: [],
       },
     });
 

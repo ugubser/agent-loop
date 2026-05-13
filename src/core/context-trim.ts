@@ -12,7 +12,8 @@
  * results from persisting across dozens of iterations.
  */
 
-import type { Message, ContentBlock, ToolUseBlock, ToolResultBlock } from "../types.js";
+import type { Message, ContentBlock, ToolUseBlock, ToolResultBlock, PromptsConfig } from "../types.js";
+import { getPrompt, format } from "./prompts.js";
 
 /** Minimum content length to bother trimming — small results aren't worth it */
 const AUTO_TRIM_MIN_CHARS = 500;
@@ -30,6 +31,7 @@ const AUTO_TRIM_MIN_CHARS = 500;
  */
 export function autoTrimConsumedResults(
   messages: Message[],
+  prompts: PromptsConfig,
   preservedTools?: Set<string>,
 ): Message[] {
   // Find the index of the last assistant message — everything after it
@@ -113,8 +115,10 @@ export function autoTrimConsumedResults(
       // Trim: replace content with a compact summary
       const name = toolName ?? "tool";
       const preview = tr.content.slice(0, 120).replace(/\n/g, " ");
-      const trimmedContent =
-        `[Prior ${name} result: ${preview}… (${tr.content.length} chars trimmed)]`;
+      const trimmedContent = format(
+        getPrompt(prompts, "markers.prior_result_summary"),
+        { name, preview, chars: tr.content.length }
+      );
 
       newBlocks.push({
         type: "tool_result",
@@ -157,6 +161,7 @@ export function trimToolContext(
   messages: Message[],
   toolName: string,
   keepLast: number,
+  prompts: PromptsConfig,
 ): Message[] {
   // Find all call+result pairs for this tool
   const pairs: ToolPair[] = [];
@@ -251,7 +256,10 @@ export function trimToolContext(
     // Build summary
     const preview = pair.resultContent.slice(0, 120).replace(/\n/g, " ");
     const status = pair.isError ? "error" : "ok";
-    summaries.push(`[Prior ${toolName} call → ${preview}… (${status})]`);
+    summaries.push(format(
+      getPrompt(prompts, "markers.prior_call_summary"),
+      { name: toolName, preview, status }
+    ));
   }
 
   // Build new message array

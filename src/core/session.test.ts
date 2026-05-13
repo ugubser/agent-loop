@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { Session } from "./session.js";
 import { FileStore } from "../persistence/file-store.js";
+import { resolvePrompts } from "./prompts.js";
 import type { AgentConfig, ProviderResponse } from "../types.js";
 
 const testConfig: AgentConfig = {
@@ -12,6 +13,7 @@ const testConfig: AgentConfig = {
   skills: { dirs: ["./skills"] },
   persistence: { backend: "file", dir: "./sessions" },
   tools: { cli: { allowedCommands: ["echo"], timeout: 120 } },
+  prompts: resolvePrompts(undefined),
 };
 
 function mockResponse(text: string, inputTokens = 100, outputTokens = 50): ProviderResponse {
