@@ -46,6 +46,33 @@ bun run src/cli.ts tail <session-id>
 | `agent-loop status <session-id>` | Show detailed session info |
 | `agent-loop tail <session-id>` | Stream transcript in real-time |
 | `agent-loop inspect <session-id>` | Show latest checkpoint contents |
+| `agent-loop audit [--port N]` | Launch the audit web UI |
+
+## Audit Web UI
+
+A built-in inspector for live and historical sessions. Browse the
+session list, watch transcripts stream in real-time (SSE), expand
+collapsible request/response payloads, search across the timeline,
+and start / stop / resume / delete sessions from the browser.
+
+```bash
+bun run src/cli.ts audit                            # default port 3900
+bun run src/cli.ts audit --port 4000                # custom port
+bun run src/cli.ts audit --config config.spark.yaml # different sessions dir
+```
+
+Then open `http://localhost:3900` in your browser.
+
+The `--config` flag controls only which `sessions/` directory the UI
+reads from (via `persistence.dir`); the audit server itself doesn't
+call any LLMs. Sessions appear as soon as they're created on disk, and
+the UI groups sub-process sessions under their parent so multi-stage
+orchestrations show as an expandable tree.
+
+The audit server is a pull-based observer — your agent-loop sessions
+do not need to know about it. They write to disk; the UI tails the
+files. You can launch the UI before or after starting any session,
+and you can leave it off entirely without affecting agent runs.
 
 ## Creating Skills
 
