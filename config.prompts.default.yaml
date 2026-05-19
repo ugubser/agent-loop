@@ -54,7 +54,7 @@ nudges:
 
   # Injected when the model returns non-empty text without any tool
   # calls and the loop has decided it's not yet a "final summary".
-  text_only_continuation: "You responded with text instead of a tool call. If there are pending questions, unanswered steps, or remaining work, call the appropriate tool NOW. Only provide a final summary if the task is fully complete."
+  text_only_continuation: "You responded with text instead of a tool call. If there are pending questions, unanswered steps, or remaining work, call the appropriate tool NOW. Only provide a final summary if the task is fully complete, and end your summary with the word \"completed\"."
 
   # Injected when malformed JSON has been emitted on `thresholds.malformed_json_threshold`
   # consecutive tool calls.
